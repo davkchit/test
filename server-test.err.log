@@ -1,0 +1,1 @@
+[config] JWT_SECRET is not set. Using a generated development secret. Admin sessions will reset after restart.

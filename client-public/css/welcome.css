@@ -1,0 +1,450 @@
+@import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600&display=swap');
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+:root {
+    --primary-blue: #7CB9E8;
+    --light-blue: #E8F4F8;
+    --bg-gradient: linear-gradient(135deg, #E8F4F8 0%, #D4E8F0 100%);
+    --text-primary: #2D3748;
+    --text-secondary: #718096;
+    --white: #FFFFFF;
+    --gray-light: #9CA3AF;
+    --gray: #6B7280;
+    --shadow: 0 20px 60px rgba(124, 185, 232, 0.15);
+    --card-bg: rgba(255, 255, 255, 0.95);
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen', 'Ubuntu', 'Cantarell', sans-serif;
+    background: url('/assets/back.png') center center / cover no-repeat fixed;
+    background-color: #E8F4F8;
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    position: relative;
+    overflow-x: hidden;
+}
+
+/* Фоновые декоративные круги */
+.background-circles {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+}
+
+.circle {
+    position: absolute;
+    border-radius: 50%;
+    background: radial-gradient(circle, rgba(124, 185, 232, 0.15) 0%, rgba(124, 185, 232, 0.05) 70%);
+    animation: float 20s infinite ease-in-out;
+}
+
+.circle-1 {
+    width: 120px;
+    height: 120px;
+    top: 10%;
+    left: 8%;
+    animation-delay: 0s;
+    background: rgba(124, 185, 232, 0.1);
+}
+
+.circle-2 {
+    width: 60px;
+    height: 60px;
+    top: 60%;
+    left: 15%;
+    animation-delay: 2s;
+    background: rgba(124, 185, 232, 0.08);
+}
+
+.circle-3 {
+    width: 80px;
+    height: 80px;
+    top: 20%;
+    right: 10%;
+    animation-delay: 4s;
+    background: rgba(124, 185, 232, 0.12);
+}
+
+.circle-4 {
+    width: 100px;
+    height: 100px;
+    bottom: 15%;
+    right: 15%;
+    animation-delay: 1s;
+    background: rgba(124, 185, 232, 0.09);
+}
+
+@keyframes float {
+
+    0%,
+    100% {
+        transform: translateY(0) translateX(0);
+    }
+
+    25% {
+        transform: translateY(-20px) translateX(10px);
+    }
+
+    50% {
+        transform: translateY(-10px) translateX(-10px);
+    }
+
+    75% {
+        transform: translateY(-30px) translateX(5px);
+    }
+}
+
+/* Контейнер */
+.container {
+    width: 100%;
+    max-width: 600px;
+    position: relative;
+    z-index: 1;
+}
+
+/* Карточка */
+.card {
+    background: var(--card-bg);
+    backdrop-filter: blur(20px);
+    border-radius: 32px;
+    padding: 60px 50px;
+    box-shadow: var(--shadow);
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+/* Иконка */
+.icon {
+    margin-bottom: 32px;
+    animation: slideDown 0.6s ease;
+}
+
+.icon img {
+    width: min(180px, 100%);
+    height: auto;
+    filter: drop-shadow(0 4px 12px rgba(124, 185, 232, 0.3));
+    display: block;
+    margin: 0 auto;
+}
+
+/* Заголовок */
+.title {
+    font-family: 'Montserrat', sans-serif;
+    font-size: 36px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+    letter-spacing: -0.5px;
+    line-height: 1.2;
+    animation: slideDown 0.6s ease 0.1s both;
+}
+
+/* Подзаголовок */
+.subtitle {
+    font-size: 16px;
+    color: var(--text-secondary);
+    margin-bottom: 40px;
+    font-weight: 400;
+    animation: slideDown 0.6s ease 0.2s both;
+    transition: opacity 0.3s ease, transform 0.3s ease;
+    min-height: 24px;
+}
+
+.subtitle.fade-out {
+    opacity: 0;
+    transform: translateY(-10px);
+}
+
+.subtitle.fade-in {
+    animation: fadeIn 0.4s ease forwards;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+        transform: translateY(10px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes slideDown {
+    from {
+        opacity: 0;
+        transform: translateY(-20px);
+    }
+
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+/* Контейнер поиска */
+.search-container {
+    position: relative;
+    margin-bottom: 24px;
+    animation: slideDown 0.6s ease 0.3s both;
+}
+
+.search-icon {
+    position: absolute;
+    left: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    pointer-events: none;
+    z-index: 2;
+}
+
+.search-input {
+    width: 100%;
+    padding: 18px 60px 18px 52px;
+    border: 2px solid transparent;
+    border-radius: 16px;
+    font-size: 16px;
+    color: var(--text-primary);
+    background: rgba(248, 250, 252, 0.8);
+    transition: all 0.3s ease;
+    outline: none;
+}
+
+.search-input::placeholder {
+    color: var(--gray-light);
+}
+
+.search-input:focus {
+    background: var(--white);
+    border-color: var(--primary-blue);
+    box-shadow: 0 0 0 4px rgba(124, 185, 232, 0.1);
+}
+
+.search-button {
+    position: absolute;
+    right: 8px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    width: 44px;
+    height: 44px;
+    border-radius: 12px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.3s ease;
+}
+
+.search-button:hover {
+    background: rgba(124, 185, 232, 0.1);
+}
+
+.search-button:active {
+    transform: translateY(-50%) scale(0.95);
+}
+
+/* Список вариантов */
+.suggestions-list {
+    position: absolute;
+    top: calc(100% + 8px);
+    left: 0;
+    right: 0;
+    background: var(--white);
+    border-radius: 16px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
+    overflow-y: auto;
+    overflow-x: hidden;
+    max-height: 200px;
+    z-index: 10;
+    border: 1px solid rgba(124, 185, 232, 0.2);
+    animation: fadeIn 0.3s ease;
+}
+
+.suggestions-list.hidden {
+    display: none;
+}
+
+.suggestion-item {
+    padding: 14px 20px;
+    font-size: 15px;
+    color: var(--text-primary);
+    cursor: pointer;
+    text-align: left;
+    transition: all 0.2s ease;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.03);
+}
+
+.suggestion-item:last-child {
+    border-bottom: none;
+}
+
+.suggestion-item:hover {
+    background: rgba(124, 185, 232, 0.1);
+    color: var(--primary-blue);
+    padding-left: 24px;
+}
+
+.suggestion-item:active {
+    background: rgba(124, 185, 232, 0.2);
+}
+
+/* Кнопка "Назад" */
+.back-button {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    margin-left: -12px;
+    background: transparent;
+    border: none;
+    color: var(--gray);
+    font-size: 15px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 12px;
+    transition: all 0.3s ease;
+    margin-bottom: 8px;
+    margin-right: auto;
+    width: fit-content;
+    animation: slideDown 0.6s ease;
+}
+
+.back-button:hover {
+    background: rgba(124, 185, 232, 0.08);
+    color: var(--text-primary);
+}
+
+.back-button:active {
+    transform: scale(0.97);
+}
+
+.back-button.hidden {
+    display: none;
+}
+
+/* Адаптивность для планшетов */
+@media (max-width: 768px) {
+    .card {
+        padding: 50px 40px;
+        border-radius: 28px;
+    }
+
+    .title {
+        font-size: 32px;
+    }
+
+    .subtitle {
+        font-size: 15px;
+    }
+}
+
+/* Адаптивность для мобильных */
+@media (max-width: 480px) {
+    body {
+        padding: 16px;
+    }
+
+    .card {
+        padding: 40px 24px;
+        border-radius: 24px;
+    }
+
+    .icon {
+        margin-bottom: 24px;
+    }
+
+    .icon img { width: min(152px, 100%); }
+
+    .title {
+        font-size: 26px;
+        margin-bottom: 12px;
+    }
+
+    .subtitle {
+        font-size: 14px;
+        margin-bottom: 32px;
+    }
+
+    .search-input {
+        padding: 16px 56px 16px 48px;
+        font-size: 15px;
+        border-radius: 14px;
+    }
+
+    .search-icon {
+        left: 16px;
+        width: 18px;
+        height: 18px;
+    }
+
+    .search-button {
+        width: 40px;
+        height: 40px;
+    }
+
+    .search-button svg {
+        width: 18px;
+        height: 18px;
+    }
+
+    .back-button {
+        padding: 8px 12px;
+        margin-left: -12px;
+        font-size: 14px;
+    }
+
+    .circle-1 {
+        width: 80px;
+        height: 80px;
+    }
+
+    .circle-2 {
+        width: 40px;
+        height: 40px;
+    }
+
+    .circle-3 {
+        width: 60px;
+        height: 60px;
+    }
+
+    .circle-4 {
+        width: 70px;
+        height: 70px;
+    }
+}
+
+/* Очень маленькие экраны */
+@media (max-width: 360px) {
+    .card {
+        padding: 32px 20px;
+    }
+
+    .title {
+        font-size: 24px;
+    }
+
+    .subtitle {
+        font-size: 13px;
+    }
+
+    .search-input {
+        font-size: 14px;
+    }
+}
