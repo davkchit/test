@@ -1,6 +1,6 @@
-const SELECTION_KEY = 'anti_vuz_selection';
+const SELECTION_KEY = 'kai_schedule_selection';
 const ADMIN_TOKEN_KEY = 'admin_token';
-const THEME_KEY = 'anti_vuz_theme';
+const THEME_KEY = 'kai_schedule_theme';
 
 export function getSavedSelection() {
     try {

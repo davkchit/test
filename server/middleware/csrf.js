@@ -2,7 +2,7 @@ const crypto = require('crypto');
 const { isProduction } = require('../config');
 const { parseCookieHeader } = require('../utils/cookies');
 
-const CSRF_COOKIE_NAME = 'anti_vuz_admin_csrf';
+const CSRF_COOKIE_NAME = 'kai_schedule_admin_csrf';
 const CSRF_HEADER_NAME = 'x-csrf-token';
 const SAFE_METHODS = new Set(['GET', 'HEAD', 'OPTIONS']);
 const TOKEN_RE = /^[a-f0-9]{64}$/i;

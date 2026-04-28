@@ -119,6 +119,13 @@ function validateLessonEntry(lesson, index, groupLabel = '') {
     };
 }
 
+function readOptionalIsoDate(value, label) {
+    if (value === undefined || value === null || value === '') return null;
+    if (typeof value !== 'string') throw createValidationError(`${label} должно быть строкой`);
+    if (!isValidIsoDate(value.trim())) throw createValidationError(`${label} должно быть датой в формате YYYY-MM-DD`);
+    return value.trim();
+}
+
 function validateScheduleUploadBody(body) {
     assertPlainObject(body, 'Тело запроса должно быть объектом');
 
@@ -130,7 +137,8 @@ function validateScheduleUploadBody(body) {
         university: readOptionalString(body.university, 'Университет', 120),
         group: readRequiredString(body.group, 'Группа', 120),
         lessons: body.lessons.map((lesson, index) => validateLessonEntry(lesson, index)),
-        target_week: parseTargetWeek(body.target_week)
+        target_week: parseTargetWeek(body.target_week),
+        reference_date: readOptionalIsoDate(body.reference_date, 'reference_date')
     };
 }
 
@@ -167,7 +175,11 @@ function validateBulkScheduleUploadBody(body) {
         };
     });
 
-    return { groups, target_week: parseTargetWeek(body.target_week) };
+    return {
+        groups,
+        target_week: parseTargetWeek(body.target_week),
+        reference_date: readOptionalIsoDate(body.reference_date, 'reference_date')
+    };
 }
 
 function validateLessonUpdateBody(body) {

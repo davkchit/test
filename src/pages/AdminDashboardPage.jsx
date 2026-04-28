@@ -321,6 +321,11 @@ export default function AdminDashboardPage() {
 
         payload.target_week = weekValue;
 
+        if (weekValue === 'current') {
+            const { formatLocalDateForApi } = await import('../lib/date.js');
+            payload.reference_date = formatLocalDateForApi(new Date());
+        }
+
         const isBulk = Array.isArray(payload.groups);
         const endpoint = isBulk ? '/api/admin/schedule/upload-bulk' : '/api/admin/schedule/upload';
 

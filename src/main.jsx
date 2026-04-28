@@ -4,7 +4,7 @@ import App from './App';
 import { registerServiceWorker } from './lib/pwa';
 import './styles/base.css';
 
-const savedTheme = localStorage.getItem('anti_vuz_theme') || 'light';
+const savedTheme = localStorage.getItem('kai_schedule_theme') || 'light';
 document.documentElement.setAttribute('data-theme', savedTheme);
 
 registerServiceWorker();

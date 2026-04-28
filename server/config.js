@@ -23,7 +23,7 @@ if (generatedDevSecret) {
 
 const JWT_SECRET = jwtSecretFromEnv || generatedDevSecret;
 const PORT = Number(process.env.PORT || 3000);
-const ADMIN_COOKIE_NAME = process.env.ADMIN_COOKIE_NAME || 'anti_vuz_admin';
+const ADMIN_COOKIE_NAME = process.env.ADMIN_COOKIE_NAME || 'kai_schedule_admin';
 
 const baseCookieOptions = {
     httpOnly: true,
