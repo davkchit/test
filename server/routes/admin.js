@@ -21,6 +21,7 @@ const {
 } = require('../login-rate-limit');
 const { formatLocalDate, getWeekMeta } = require('../utils/date');
 const {
+    validateBulkScheduleUploadBody,
     validateLessonUpdateBody,
     validateLoginBody,
     validateScheduleUploadBody,
@@ -223,6 +224,143 @@ router.post('/schedule/upload', (req, res) => {
         });
     } catch (error) {
         console.error('Upload error:', error);
+        res.status(500).json({ error: `Ошибка при загрузке расписания: ${error.message}` });
+    }
+});
+
+router.post('/schedule/upload-bulk', (req, res) => {
+    let payload;
+
+    try {
+        payload = validateBulkScheduleUploadBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const { groups: groupPayloads, target_week: targetWeek } = payload;
+    const db = getDb();
+    const weekTypeMap = { all: 0, odd: 1, even: 2 };
+
+    let specificWeek = null;
+
+    if (targetWeek === 'current') {
+        const semesterStartRow = db.prepare("SELECT value FROM settings WHERE key = 'semester_start_date'").get();
+        const semesterStart = semesterStartRow ? semesterStartRow.value : '2026-02-09';
+        specificWeek = getWeekMeta(semesterStart, formatLocalDate()).weekNumber;
+    } else if (typeof targetWeek === 'number') {
+        specificWeek = targetWeek;
+    }
+
+    // Pre-resolve all groups before any writes — fail fast if any group is missing
+    const resolvedGroups = [];
+
+    for (const entry of groupPayloads) {
+        const { university, group, lessons } = entry;
+        let groupRow;
+
+        if (university) {
+            groupRow = db.prepare(`
+                SELECT g.id, u.short_name AS university_short_name FROM groups_ g
+                JOIN universities u ON u.id = g.university_id
+                WHERE u.short_name = ? AND g.name = ?
+            `).get(university, group);
+        } else {
+            const candidates = db.prepare(`
+                SELECT g.id, u.short_name AS university_short_name
+                FROM groups_ g
+                JOIN universities u ON u.id = g.university_id
+                WHERE g.name = ?
+                ORDER BY u.short_name, g.id
+            `).all(group);
+
+            if (candidates.length > 1) {
+                return res.status(409).json({
+                    error: `Группа "${group}" найдена в нескольких вузах. Укажите поле university.`
+                });
+            }
+
+            groupRow = candidates[0];
+        }
+
+        if (!groupRow) {
+            return res.status(404).json({ error: `Группа "${group}" не найдена` });
+        }
+
+        resolvedGroups.push({ groupRow, group, lessons });
+    }
+
+    const transaction = db.transaction(() => {
+        const insert = db.prepare(`
+            INSERT INTO lessons (
+                group_id, subgroup, day_of_week, week_type, specific_week,
+                time_start, time_end, subject, room, lesson_type, teacher, sort_order
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        const results = [];
+
+        for (const { groupRow, group, lessons } of resolvedGroups) {
+            if (specificWeek === null) {
+                db.prepare('DELETE FROM lessons WHERE group_id = ? AND specific_week IS NULL').run(groupRow.id);
+            } else {
+                db.prepare('DELETE FROM lessons WHERE group_id = ? AND specific_week = ?').run(groupRow.id, specificWeek);
+            }
+
+            let count = 0;
+
+            for (const lesson of lessons) {
+                insert.run(
+                    groupRow.id,
+                    lesson.subgroup,
+                    lesson.day,
+                    weekTypeMap[lesson.week_type],
+                    specificWeek,
+                    lesson.time_start,
+                    lesson.time_end,
+                    lesson.subject,
+                    lesson.room,
+                    lesson.type,
+                    lesson.teacher,
+                    lesson.sort_order ?? count
+                );
+                count += 1;
+            }
+
+            results.push({ group, imported: count });
+        }
+
+        return results;
+    });
+
+    try {
+        const results = transaction();
+        const totalImported = results.reduce((sum, r) => sum + r.imported, 0);
+
+        writeAuditLog(db, {
+            adminId: req.admin.id,
+            action: 'schedule.upload',
+            entityType: 'bulk_schedule',
+            entityId: null,
+            ipAddress: getClientAddress(req),
+            details: {
+                groups: results.map(r => r.group),
+                total_imported: totalImported,
+                group_count: results.length,
+                target_week: targetWeek,
+                specific_week: specificWeek
+            }
+        });
+
+        res.json({
+            success: true,
+            total_imported: totalImported,
+            groups: results,
+            applied_to: specificWeek === null ? 'template' : 'specific_week',
+            specific_week: specificWeek
+        });
+    } catch (error) {
+        console.error('Bulk upload error:', error);
         res.status(500).json({ error: `Ошибка при загрузке расписания: ${error.message}` });
     }
 });

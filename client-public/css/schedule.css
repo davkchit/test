@@ -10,6 +10,35 @@
     --hover-bg: #f3f4f6;
 }
 
+[data-theme="dark"] {
+    --bg-color: #0f172a;
+    --card-bg: #1e293b;
+    --text-main: #f1f5f9;
+    --text-secondary: #94a3b8;
+    --tag-bg: #1e3a5f;
+    --tag-text: #60a5fa;
+    --border-color: #334155;
+    --hover-bg: #1e293b;
+}
+[data-theme="dark"] body { background-color: var(--bg-color); color: var(--text-main); }
+[data-theme="dark"] .date-selector { background: #1e293b; border-color: #334155; color: #f1f5f9; }
+[data-theme="dark"] .date-selector svg { color: #94a3b8; }
+[data-theme="dark"] .date-picker-popup { background: #1e293b; border-color: #334155; box-shadow: 0 24px 60px rgba(0,0,0,0.5); }
+[data-theme="dark"] .dp-title-row { background: #0f172a; color: #f1f5f9; }
+[data-theme="dark"] .dp-nav-btn { color: #64748b; }
+[data-theme="dark"] .dp-nav-btn:hover:not(:disabled) { background: #0f172a; color: #94a3b8; }
+[data-theme="dark"] .dp-day { color: #f1f5f9; }
+[data-theme="dark"] .dp-day:hover:not(:disabled) { background: #1e3a5f; color: #60a5fa; }
+[data-theme="dark"] .dp-day.today { color: #60a5fa; }
+[data-theme="dark"] .dp-day.selected.today { color: #fff; }
+[data-theme="dark"] .dp-day:disabled { color: #334155; }
+[data-theme="dark"] .dp-day-header { color: #475569; }
+[data-theme="dark"] .burger-dropdown { background: #1e293b; border-color: #334155; box-shadow: 0 10px 25px rgba(0,0,0,0.4); }
+[data-theme="dark"] .support-widget { background-color: #1e293b; box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+[data-theme="dark"] .cookie-banner { background-color: #1e293b; color: var(--text-main); box-shadow: 0 4px 20px rgba(0,0,0,0.3); }
+[data-theme="dark"] .view-switcher { background-color: #1e293b; }
+[data-theme="dark"] .view-btn.active { background-color: #334155; }
+
 * { margin: 0; padding: 0; box-sizing: border-box; }
 
 body {
@@ -94,7 +123,8 @@ body {
 .view-btn { background: none; border: none; padding: 8px; border-radius: 8px; color: var(--text-secondary); cursor: pointer; display: flex; align-items: center; justify-content: center; }
 .view-btn.active { background-color: white; color: var(--text-main); box-shadow: 0 1px 2px rgba(0,0,0,0.05); }
 
-.schedule-grid { display: flex; flex-wrap: nowrap; overflow-x: auto; flex: 1; scrollbar-width: thin; }
+.schedule-grid { display: flex; flex-wrap: nowrap; overflow-x: auto; flex: 1; scrollbar-width: none; cursor: grab; user-select: none; }
+.schedule-grid::-webkit-scrollbar { display: none; }
 .day-column { border-right: 1px solid var(--border-color); padding: 20px; display: flex; flex-direction: column; gap: 16px; flex: 0 0 20%; min-width: 300px; }
 .day-column:last-child { border-right: none; }
 .day-header { margin-bottom: 12px; }
@@ -136,9 +166,6 @@ body {
 
 @media (max-width: 1400px) {
     .schedule-grid { padding-bottom: 10px; }
-    .schedule-grid::-webkit-scrollbar { height: 8px; }
-    .schedule-grid::-webkit-scrollbar-track { background: #f1f1f1; }
-    .schedule-grid::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
 }
 
 @media (max-width: 768px) {
@@ -291,3 +318,27 @@ body {
     font-weight: 700;
 }
 .dp-day.selected.today { color: #ffffff; }
+
+/* Theme toggle switch */
+.theme-toggle {
+    display: flex; align-items: center; gap: 8px;
+    background: none; border: none; cursor: pointer;
+    padding: 6px 10px; border-radius: 10px;
+    color: var(--text-secondary); transition: background 0.2s, color 0.2s;
+}
+.theme-toggle:hover { background-color: var(--hover-bg); color: var(--text-main); }
+.toggle-track {
+    width: 38px; height: 22px; border-radius: 999px;
+    background: #d1d5db; position: relative; flex-shrink: 0;
+    transition: background 0.25s ease;
+}
+[data-theme="dark"] .toggle-track { background: var(--primary-blue); }
+.toggle-thumb {
+    position: absolute; top: 3px; left: 3px;
+    width: 16px; height: 16px; border-radius: 50%;
+    background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,0.2);
+    transition: transform 0.25s ease;
+}
+[data-theme="dark"] .toggle-thumb { transform: translateX(16px); }
+.theme-dropdown-item { justify-content: space-between !important; cursor: pointer; }
+.theme-dropdown-left { display: flex; align-items: center; gap: 12px; }

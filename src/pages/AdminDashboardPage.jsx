@@ -307,22 +307,28 @@ export default function AdminDashboardPage() {
             return;
         }
 
-        if (targetWeek === 'custom') {
-            if (!customWeekNumber.trim()) {
-                setUploadStatus({ type: 'error', message: 'Введите номер недели' });
-                return;
-            }
+        const weekValue = targetWeek === 'custom'
+            ? (() => {
+                if (!customWeekNumber.trim()) {
+                    setUploadStatus({ type: 'error', message: 'Введите номер недели' });
+                    return null;
+                }
+                return Number(customWeekNumber.trim());
+            })()
+            : targetWeek;
 
-            payload.target_week = Number(customWeekNumber.trim());
-        } else {
-            payload.target_week = targetWeek;
-        }
+        if (weekValue === null) return;
+
+        payload.target_week = weekValue;
+
+        const isBulk = Array.isArray(payload.groups);
+        const endpoint = isBulk ? '/api/admin/schedule/upload-bulk' : '/api/admin/schedule/upload';
 
         setIsUploading(true);
         setUploadStatus({ type: '', message: '' });
 
         try {
-            const response = await api('/api/admin/schedule/upload', {
+            const response = await api(endpoint, {
                 method: 'POST',
                 body: JSON.stringify(payload)
             });
@@ -337,11 +343,19 @@ export default function AdminDashboardPage() {
                 ? 'как шаблон семестра'
                 : `на неделю ${result.specific_week}`;
 
-            setUploadStatus({
-                type: 'success',
-                message: `Загружено ${result.imported} занятий для группы ${result.group} (${appliedMessage})`
-            });
-            setToastMessage(`Расписание для ${result.group} обновлено`);
+            if (isBulk) {
+                setUploadStatus({
+                    type: 'success',
+                    message: `Загружено ${result.total_imported} занятий для ${result.groups.length} групп (${appliedMessage})`
+                });
+                setToastMessage(`Расписание для ${result.groups.length} групп обновлено`);
+            } else {
+                setUploadStatus({
+                    type: 'success',
+                    message: `Загружено ${result.imported} занятий для группы ${result.group} (${appliedMessage})`
+                });
+                setToastMessage(`Расписание для ${result.group} обновлено`);
+            }
 
             if (selectedGroupId) {
                 loadLessons(selectedGroupId);
@@ -608,11 +622,12 @@ export default function AdminDashboardPage() {
                     </div>
                     <div className="format-hint">
                         <h3>Формат JSON</h3>
-                        <p><strong>day:</strong> 1=Пн, 2=Вт, 3=Ср, 4=Чт, 5=Пт, 6=Сб</p>
+                        <p><strong>Одна группа:</strong> <code>{'"group": "23113", "university": "...", "lessons": [...]'}</code></p>
+                        <p><strong>Все группы сразу:</strong> <code>{'"groups": [{"group": "23113", "lessons": [...]}, ...]'}</code></p>
+                        <p style={{ marginTop: '0.5rem' }}><strong>day:</strong> 1=Пн, 2=Вт, 3=Ср, 4=Чт, 5=Пт, 6=Сб, 7={'Вс'}</p>
                         <p><strong>subgroup:</strong> 0=обе, 1=первая, 2=вторая</p>
                         <p><strong>week_type:</strong> "all", "odd", "even"</p>
-                        <p><strong>day:</strong> 7={'\u0412\u0441'}</p>
-                        <p><strong>Важно:</strong> шаблон и конкретная неделя хранятся отдельно, поэтому можно держать базовый шаблон семестра и потом переопределять отдельные недели.</p>
+                        <p><strong>Важно:</strong> шаблон и конкретная неделя хранятся отдельно. Bulk-загрузка атомарная — либо все группы, либо ни одна.</p>
                     </div>
                 </section>
 

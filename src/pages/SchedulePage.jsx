@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import usePageAssets from '../hooks/usePageAssets';
 import { capitalize, formatLocalDateForApi, getSemesterWeekNumber, normalizeDate } from '../lib/date';
-import { clearSelection, getSavedSelection } from '../lib/storage';
+import { clearSelection, getSavedSelection, getSavedTheme, saveTheme } from '../lib/storage';
 
 const MAX_DATE = new Date(2026, 11, 31);
 const SCHEDULE_WINDOW_DAYS = 28;
@@ -39,6 +39,9 @@ export default function SchedulePage() {
     const [currentView, setCurrentView] = useState('day');
     const [isBurgerOpen, setIsBurgerOpen] = useState(false);
     const [activeMobileTab, setActiveMobileTab] = useState('');
+    const [isDark, setIsDark] = useState(() => getSavedTheme() === 'dark');
+    const [refreshKey, setRefreshKey] = useState(0);
+    const lastFetchTimeRef = useRef(0);
 
     useEffect(() => {
         const selection = getSavedSelection();
@@ -118,6 +121,7 @@ export default function SchedulePage() {
                 if (!ignore) {
                     setScheduleData(data);
                     setActiveMobileTab(`day-${normalizeDate(currentDate).getTime()}`);
+                    lastFetchTimeRef.current = Date.now();
                 }
             } catch {
                 if (!ignore) {
@@ -140,13 +144,64 @@ export default function SchedulePage() {
         return () => {
             ignore = true;
         };
-    }, [currentDate, savedSelection]);
+    }, [currentDate, savedSelection, refreshKey]);
 
     useEffect(() => {
         if (scheduleGridRef.current) {
             scheduleGridRef.current.scrollLeft = 0;
         }
     }, [currentDate, scheduleData]);
+
+    useEffect(() => {
+        const grid = scheduleGridRef.current;
+        if (!grid) return;
+
+        let isDown = false;
+        let startX = 0;
+        let scrollLeft = 0;
+
+        function onMouseDown(e) {
+            isDown = true;
+            startX = e.clientX;
+            scrollLeft = grid.scrollLeft;
+            grid.style.cursor = 'grabbing';
+        }
+
+        function onMouseUp() {
+            if (!isDown) return;
+            isDown = false;
+            grid.style.cursor = 'grab';
+        }
+
+        function onMouseMove(e) {
+            if (!isDown) return;
+            grid.scrollLeft = scrollLeft - (e.clientX - startX);
+        }
+
+        grid.addEventListener('mousedown', onMouseDown);
+        window.addEventListener('mouseup', onMouseUp);
+        window.addEventListener('mousemove', onMouseMove);
+
+        return () => {
+            grid.removeEventListener('mousedown', onMouseDown);
+            window.removeEventListener('mouseup', onMouseUp);
+            window.removeEventListener('mousemove', onMouseMove);
+        };
+    }, [isAssetsReady]);
+
+    useEffect(() => {
+        document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
+    }, [isDark]);
+
+    useEffect(() => {
+        function handleVisibilityChange() {
+            if (document.visibilityState === 'visible' && Date.now() - lastFetchTimeRef.current > 60_000) {
+                setRefreshKey((k) => k + 1);
+            }
+        }
+        document.addEventListener('visibilitychange', handleVisibilityChange);
+        return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+    }, []);
 
     const groupInfoText = getGroupInfoText(savedSelection);
     const scheduleDays = buildScheduleDays(scheduleData, currentDate);
@@ -165,6 +220,14 @@ export default function SchedulePage() {
     function switchSchedule() {
         clearSelection();
         navigate('/', { replace: true });
+    }
+
+    function toggleTheme() {
+        setIsDark((previous) => {
+            const next = !previous;
+            saveTheme(next ? 'dark' : 'light');
+            return next;
+        });
     }
 
     function toggleDatePicker() {
@@ -279,6 +342,26 @@ export default function SchedulePage() {
                     >
                         Выбрать другое расписание
                     </a>
+                    <button
+                        className="theme-toggle desktop-only"
+                        onClick={toggleTheme}
+                        aria-label={isDark ? 'Включить светлую тему' : 'Включить тёмную тему'}
+                    >
+                        {isDark ? (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <circle cx="12" cy="12" r="5" />
+                                <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
+                                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+                                <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
+                                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+                            </svg>
+                        ) : (
+                            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                            </svg>
+                        )}
+                        <span className="toggle-track"><span className="toggle-thumb" /></span>
+                    </button>
                     <div className="burger-menu-container mobile-only" ref={burgerMenuRef}>
                         <button className="burger-btn" id="burgerBtn" onClick={() => setIsBurgerOpen((previous) => !previous)}>
                             <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -302,6 +385,15 @@ export default function SchedulePage() {
                                     <line x1="9" y1="21" x2="9" y2="9"></line>
                                 </svg>
                                 Сменить вид расписания
+                            </button>
+                            <button className="dropdown-item theme-dropdown-item" onClick={toggleTheme}>
+                                <div className="theme-dropdown-left">
+                                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                                        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+                                    </svg>
+                                    Тёмная тема
+                                </div>
+                                <span className="toggle-track"><span className="toggle-thumb" /></span>
                             </button>
                         </div>
                     </div>

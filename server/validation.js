@@ -79,6 +79,46 @@ function validateLoginBody(body) {
     };
 }
 
+function parseTargetWeek(raw) {
+    const value = raw ?? 'template';
+    if (value === 'template' || value === 'current') return value;
+    return readInteger(value, 'Номер недели', { min: 1 });
+}
+
+function validateLessonEntry(lesson, index, groupLabel = '') {
+    assertPlainObject(lesson, `Занятие #${index + 1}${groupLabel} должно быть объектом`);
+
+    const timeStart = readRequiredString(lesson.time_start, `time_start у занятия #${index + 1}`, 5);
+    const timeEnd = readRequiredString(lesson.time_end, `time_end у занятия #${index + 1}`, 5);
+
+    if (!isValidTime(timeStart) || !isValidTime(timeEnd)) {
+        throw createValidationError(`Некорректное время у занятия #${index + 1}${groupLabel}`);
+    }
+
+    if (timeStart >= timeEnd) {
+        throw createValidationError(`time_end должно быть позже time_start у занятия #${index + 1}${groupLabel}`);
+    }
+
+    const weekType = lesson.week_type ?? 'all';
+
+    if (!['all', 'odd', 'even'].includes(weekType)) {
+        throw createValidationError(`Некорректный week_type у занятия #${index + 1}${groupLabel}`);
+    }
+
+    return {
+        day: readInteger(lesson.day, `day у занятия #${index + 1}`, { min: 1, max: 7 }),
+        subgroup: lesson.subgroup === undefined ? 0 : readInteger(lesson.subgroup, `subgroup у занятия #${index + 1}`, { min: 0, max: 2 }),
+        time_start: timeStart,
+        time_end: timeEnd,
+        subject: readRequiredString(lesson.subject, `subject у занятия #${index + 1}`),
+        room: readOptionalString(lesson.room, `room у занятия #${index + 1}`),
+        type: readOptionalString(lesson.type, `type у занятия #${index + 1}`),
+        teacher: readOptionalString(lesson.teacher, `teacher у занятия #${index + 1}`),
+        week_type: weekType,
+        sort_order: lesson.sort_order === undefined ? undefined : readInteger(lesson.sort_order, `sort_order у занятия #${index + 1}`, { min: 0 })
+    };
+}
+
 function validateScheduleUploadBody(body) {
     assertPlainObject(body, 'Тело запроса должно быть объектом');
 
@@ -86,55 +126,48 @@ function validateScheduleUploadBody(body) {
         throw createValidationError('Поле lessons должно быть массивом');
     }
 
-    const targetWeekRaw = body.target_week ?? 'template';
-    let targetWeek = 'template';
-
-    if (targetWeekRaw === 'template' || targetWeekRaw === 'current') {
-        targetWeek = targetWeekRaw;
-    } else {
-        targetWeek = readInteger(targetWeekRaw, 'Номер недели', { min: 1 });
-    }
-
-    const lessons = body.lessons.map((lesson, index) => {
-        assertPlainObject(lesson, `Занятие #${index + 1} должно быть объектом`);
-
-        const timeStart = readRequiredString(lesson.time_start, `time_start у занятия #${index + 1}`, 5);
-        const timeEnd = readRequiredString(lesson.time_end, `time_end у занятия #${index + 1}`, 5);
-
-        if (!isValidTime(timeStart) || !isValidTime(timeEnd)) {
-            throw createValidationError(`Некорректное время у занятия #${index + 1}`);
-        }
-
-        if (timeStart >= timeEnd) {
-            throw createValidationError(`time_end должно быть позже time_start у занятия #${index + 1}`);
-        }
-
-        const weekType = lesson.week_type ?? 'all';
-
-        if (!['all', 'odd', 'even'].includes(weekType)) {
-            throw createValidationError(`Некорректный week_type у занятия #${index + 1}`);
-        }
-
-        return {
-            day: readInteger(lesson.day, `day у занятия #${index + 1}`, { min: 1, max: 7 }),
-            subgroup: lesson.subgroup === undefined ? 0 : readInteger(lesson.subgroup, `subgroup у занятия #${index + 1}`, { min: 0, max: 2 }),
-            time_start: timeStart,
-            time_end: timeEnd,
-            subject: readRequiredString(lesson.subject, `subject у занятия #${index + 1}`),
-            room: readOptionalString(lesson.room, `room у занятия #${index + 1}`),
-            type: readOptionalString(lesson.type, `type у занятия #${index + 1}`),
-            teacher: readOptionalString(lesson.teacher, `teacher у занятия #${index + 1}`),
-            week_type: weekType,
-            sort_order: lesson.sort_order === undefined ? undefined : readInteger(lesson.sort_order, `sort_order у занятия #${index + 1}`, { min: 0 })
-        };
-    });
-
     return {
         university: readOptionalString(body.university, 'Университет', 120),
         group: readRequiredString(body.group, 'Группа', 120),
-        lessons,
-        target_week: targetWeek
+        lessons: body.lessons.map((lesson, index) => validateLessonEntry(lesson, index)),
+        target_week: parseTargetWeek(body.target_week)
     };
+}
+
+function validateBulkScheduleUploadBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    if (!Array.isArray(body.groups)) {
+        throw createValidationError('Поле groups должно быть массивом');
+    }
+
+    if (body.groups.length === 0) {
+        throw createValidationError('Поле groups не должно быть пустым');
+    }
+
+    if (body.groups.length > 100) {
+        throw createValidationError('Слишком много групп (максимум 100)');
+    }
+
+    const groups = body.groups.map((entry, index) => {
+        assertPlainObject(entry, `Группа #${index + 1} должна быть объектом`);
+
+        const group = readRequiredString(entry.group, `group у группы #${index + 1}`, 120);
+
+        if (!Array.isArray(entry.lessons)) {
+            throw createValidationError(`Поле lessons у группы #${index + 1} (${group}) должно быть массивом`);
+        }
+
+        return {
+            university: readOptionalString(entry.university, 'Университет', 120),
+            group,
+            lessons: entry.lessons.map((lesson, lessonIndex) =>
+                validateLessonEntry(lesson, lessonIndex, ` (группа ${group})`)
+            )
+        };
+    });
+
+    return { groups, target_week: parseTargetWeek(body.target_week) };
 }
 
 function validateLessonUpdateBody(body) {
@@ -226,6 +259,7 @@ function validateSettingsBody(body) {
 
 module.exports = {
     createValidationError,
+    validateBulkScheduleUploadBody,
     validateLessonUpdateBody,
     validateLoginBody,
     validateScheduleUploadBody,

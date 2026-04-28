@@ -111,13 +111,74 @@ body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--tex
 @keyframes slideUp { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: translateY(0); } }
 
 @media (max-width: 768px) {
-    .sidebar { width: 60px; padding: 16px 8px; }
-    .sidebar-title, .nav-item span { display: none; }
-    .nav-item { justify-content: center; padding: 12px; }
-    .sidebar-header { justify-content: center; padding-bottom: 16px; }
-    .sidebar-header img { width: 34px; }
-    .main-content { padding: 20px 16px; }
+    /* Layout: column, sidebar becomes fixed bottom tab bar */
+    body { overflow-y: auto; height: auto; min-height: 100vh; }
+    .dashboard { flex-direction: column; height: auto; min-height: 100vh; }
+
+    /* Bottom tab bar */
+    .sidebar {
+        position: fixed; bottom: 0; left: 0; right: 0;
+        width: 100%; height: 60px; flex-direction: row;
+        padding: 0; border-top: 1px solid rgba(255,255,255,0.1);
+        z-index: 500; overflow: hidden;
+    }
+    .sidebar-header { display: none; }
+    .sidebar-nav { flex-direction: row; flex: 1; gap: 0; align-items: stretch; overflow: hidden; }
+    .nav-item {
+        flex: 1; flex-direction: column; justify-content: center;
+        align-items: center; padding: 8px 2px; border-radius: 0;
+        gap: 0; font-size: 0; min-width: 0; overflow: hidden;
+    }
+    .nav-item svg { flex-shrink: 0; width: 22px; height: 22px; }
+    .logout-btn {
+        flex: 0 0 56px; border-left: 1px solid rgba(255,255,255,0.08);
+        font-size: 0; margin-top: 0;
+    }
+
+    /* Main content */
+    .main-content { padding: 20px 16px 72px; }
+    .section-title { font-size: 20px; }
+
+    /* Upload */
+    .json-textarea { min-height: 180px; font-size: 12px; }
+    .upload-actions { flex-wrap: wrap; gap: 12px; }
+    .format-hint code { word-break: break-all; }
+
+    /* Tables */
+    .lessons-table-wrapper { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .lessons-table { min-width: 580px; }
+    .lessons-toolbar { flex-wrap: wrap; }
+    .group-select { flex: 1; min-width: 0; font-size: 16px; }
+
+    /* Audit */
+    .audit-header { flex-direction: column; align-items: stretch; gap: 12px; }
+    .section-actions { width: 100%; justify-content: flex-end; }
+
+    /* Settings */
+    .settings-form { max-width: 100%; }
+
+    /* Modal — выезжает снизу */
+    .modal-overlay { align-items: flex-end; padding: 0; }
+    .modal-card {
+        border-radius: 24px 24px 0 0; padding: 24px 20px 32px;
+        max-width: 100%; width: 100%; max-height: 90vh; overflow-y: auto;
+        box-shadow: 0 -8px 40px rgba(0,0,0,0.15);
+    }
+    .modal-actions { justify-content: stretch; }
+    .modal-actions .btn { flex: 1; }
+
+    /* Prevent iOS input zoom */
+    .form-input { font-size: 16px; }
+    .setting-input { font-size: 16px; }
+    .json-textarea { font-size: 13px; }
+
+    /* Forms */
     .form-row-pair { grid-template-columns: 1fr; }
-    .audit-header { flex-direction: column; align-items: stretch; }
-    .section-actions { width: 100%; }
+}
+
+@media (max-width: 480px) {
+    .main-content { padding: 16px 12px 72px; }
+    .modal-card { padding: 20px 16px 28px; }
+    .section-title { font-size: 18px; }
+    .btn { padding: 10px 16px; }
 }
