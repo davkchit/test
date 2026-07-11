@@ -115,7 +115,7 @@ router.post('/schedule/upload', (req, res) => {
         return res.status(error.statusCode || 400).json({ error: error.message });
     }
 
-    const { university, group, lessons, target_week: targetWeek } = payload;
+    const { university, group, lessons, target_week: targetWeek, reference_date: referenceDate } = payload;
     const db = getDb();
 
     let groupRow;
@@ -154,7 +154,7 @@ router.post('/schedule/upload', (req, res) => {
     if (targetWeek === 'current') {
         const semesterStartRow = db.prepare("SELECT value FROM settings WHERE key = 'semester_start_date'").get();
         const semesterStart = semesterStartRow ? semesterStartRow.value : '2026-02-09';
-        specificWeek = getWeekMeta(semesterStart, formatLocalDate()).weekNumber;
+        specificWeek = getWeekMeta(semesterStart, referenceDate || formatLocalDate()).weekNumber;
     } else if (typeof targetWeek === 'number') {
         specificWeek = targetWeek;
     }
@@ -237,7 +237,7 @@ router.post('/schedule/upload-bulk', (req, res) => {
         return res.status(error.statusCode || 400).json({ error: error.message });
     }
 
-    const { groups: groupPayloads, target_week: targetWeek } = payload;
+    const { groups: groupPayloads, target_week: targetWeek, reference_date: referenceDate } = payload;
     const db = getDb();
     const weekTypeMap = { all: 0, odd: 1, even: 2 };
 
@@ -246,7 +246,7 @@ router.post('/schedule/upload-bulk', (req, res) => {
     if (targetWeek === 'current') {
         const semesterStartRow = db.prepare("SELECT value FROM settings WHERE key = 'semester_start_date'").get();
         const semesterStart = semesterStartRow ? semesterStartRow.value : '2026-02-09';
-        specificWeek = getWeekMeta(semesterStart, formatLocalDate()).weekNumber;
+        specificWeek = getWeekMeta(semesterStart, referenceDate || formatLocalDate()).weekNumber;
     } else if (typeof targetWeek === 'number') {
         specificWeek = targetWeek;
     }
@@ -590,27 +590,37 @@ router.get('/audit-logs/export', (req, res) => {
 });
 
 router.get('/backups', async (req, res) => {
-    const backups = await listDatabaseBackups();
-    res.json(backups);
+    try {
+        const backups = await listDatabaseBackups();
+        res.json(backups);
+    } catch (error) {
+        console.error('Backup list error:', error);
+        res.status(500).json({ error: 'Не удалось получить список резервных копий' });
+    }
 });
 
 router.post('/backups', async (req, res) => {
-    const backup = await createDatabaseBackup();
-    const db = getDb();
+    try {
+        const backup = await createDatabaseBackup();
+        const db = getDb();
 
-    writeAuditLog(db, {
-        adminId: req.admin.id,
-        action: 'backup.create',
-        entityType: 'database_backup',
-        entityId: backup.file_name,
-        ipAddress: getClientAddress(req),
-        details: backup
-    });
+        writeAuditLog(db, {
+            adminId: req.admin.id,
+            action: 'backup.create',
+            entityType: 'database_backup',
+            entityId: backup.file_name,
+            ipAddress: getClientAddress(req),
+            details: backup
+        });
 
-    res.json({
-        success: true,
-        backup
-    });
+        res.json({
+            success: true,
+            backup
+        });
+    } catch (error) {
+        console.error('Backup create error:', error);
+        res.status(500).json({ error: 'Не удалось создать резервную копию' });
+    }
 });
 
 router.get('/backups/:fileName/download', async (req, res) => {

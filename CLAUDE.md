@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ANTI_VUZ is a full-stack university schedule management web app. Students browse schedules; admins manage them through a protected dashboard.
+ANTI_VUZ is a full-stack university schedule management web app. Students browse schedules; admins manage them through a protected dashboard. Deployed on Railway.
 
 **Stack:** React 19 + Vite (frontend), Express 5 (backend), SQLite via better-sqlite3.
 
@@ -74,7 +74,7 @@ In production, Express serves the Vite-built `dist/` and handles all `/api` rout
 
 Pages: `WelcomePage` → user selects university/group → `SchedulePage` renders the timetable. `AdminLoginPage` and `AdminDashboardPage` are separate flows.
 
-`src/lib/storage.js` persists the user's university/group/subgroup selection to `localStorage`.
+`src/lib/storage.js` persists selection, theme preference, and admin token to `localStorage`.
 
 ### Database Schema (key tables)
 
@@ -92,6 +92,30 @@ Lessons have a `specific_week` column:
 
 `week_type`: `0` = every week, `1` = odd weeks, `2` = even weeks. Week number is calculated from `semester_start_date` in settings.
 
+### Bulk Schedule Upload
+
+Admin can upload schedules for multiple groups in one request:
+
+```json
+{
+  "target_week": "template",
+  "groups": [
+    { "group": "23113", "university": "КНИТУ-КАИ", "lessons": [...] },
+    { "group": "23114", "university": "КНИТУ-КАИ", "lessons": [...] }
+  ]
+}
+```
+
+Endpoint: `POST /api/admin/schedule/upload-bulk`. Atomic — either all groups succeed or none. Frontend auto-detects bulk vs single format by checking for `groups` array vs `group` string.
+
+### Dark Theme
+
+Toggle in `SchedulePage` header (desktop) and burger menu (mobile). Theme stored in `localStorage` as `anti_vuz_theme`. Applied globally to `document.documentElement` via `data-theme="dark"` attribute on app startup (`src/main.jsx`). CSS variables are overridden under `[data-theme="dark"]` in `schedule.css` and `welcome.css`.
+
+### PWA Auto-Refresh
+
+`SchedulePage` listens to `visibilitychange` — when the user returns to the app after 60+ seconds, schedule data is re-fetched from the server. Service worker uses network-first strategy for all `/api/schedule/` requests, so data is always fresh when online.
+
 ### Security Model
 
 - Admin auth: JWT stored in httpOnly, SameSite=Strict cookie
@@ -99,3 +123,7 @@ Lessons have a `specific_week` column:
 - Login is rate-limited via `login_attempts` table
 - Optional IP allowlist via `ADMIN_ALLOWED_IPS`
 - CSP and security headers set in `app.js`
+
+### Deployment Note (Railway)
+
+`data/schedule.db` is committed to git (not in `.gitignore`) so Railway gets the database on deploy. Railway's filesystem is ephemeral — to preserve weekly overrides across deploys, commit the DB before pushing. Download the latest backup from the admin panel → replace `data/schedule.db` → commit → push.
