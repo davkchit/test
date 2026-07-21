@@ -1,8 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import usePageAssets from '../hooks/usePageAssets';
 import { capitalize, formatLocalDateForApi, getSemesterWeekNumber, normalizeDate } from '../lib/date';
 import { clearSelection, getSavedSelection, getSavedTheme, saveTheme } from '../lib/storage';
+import { resolveTemplateLessons } from '../lib/templateResolve';
 
 const MAX_DATE = new Date(2026, 11, 31);
 const SCHEDULE_WINDOW_DAYS = 28;
@@ -26,6 +27,8 @@ export default function SchedulePage() {
     const dateSelectorRef = useRef(null);
     const burgerMenuRef = useRef(null);
     const scheduleGridRef = useRef(null);
+    const appContainerRef = useRef(null);
+    const gridWrapRef = useRef(null);
 
     const [savedSelection, setSavedSelection] = useState(() => getSavedSelection());
     const [currentDate, setCurrentDate] = useState(() => normalizeDate(new Date()));
@@ -35,6 +38,7 @@ export default function SchedulePage() {
     const [isLoading, setIsLoading] = useState(true);
     const [errorMessage, setErrorMessage] = useState('');
     const [isCookieVisible, setIsCookieVisible] = useState(true);
+    const [isSupportVisible, setIsSupportVisible] = useState(true);
     const [isMobileView, setIsMobileView] = useState(() => window.matchMedia('(max-width: 768px)').matches);
     const [currentView, setCurrentView] = useState('day');
     const [isBurgerOpen, setIsBurgerOpen] = useState(false);
@@ -189,6 +193,32 @@ export default function SchedulePage() {
         };
     }, [isAssetsReady]);
 
+    useLayoutEffect(() => {
+        const appContainer = appContainerRef.current;
+        const gridWrap = gridWrapRef.current;
+        if (!appContainer || !gridWrap) return;
+
+        // Column divider lines run the full height of the grid, so their bottom
+        // margin is just this element's own padding-bottom — keep it equal to
+        // the space the header+toolbar already take above the grid, so the
+        // dividers read as evenly framed rather than nearly touching the bottom.
+        // Desktop-only: the mobile layout hides the toolbar and uses its own
+        // fixed bottom padding for the day-card list.
+        function syncBottomGap() {
+            if (window.matchMedia('(max-width: 768px)').matches) {
+                gridWrap.style.removeProperty('--grid-bottom-gap');
+                return;
+            }
+
+            const topGap = gridWrap.getBoundingClientRect().top - appContainer.getBoundingClientRect().top;
+            gridWrap.style.setProperty('--grid-bottom-gap', `${Math.max(0, Math.round(topGap))}px`);
+        }
+
+        syncBottomGap();
+        window.addEventListener('resize', syncBottomGap);
+        return () => window.removeEventListener('resize', syncBottomGap);
+    }, [isAssetsReady, isMobileView]);
+
     useEffect(() => {
         document.documentElement.setAttribute('data-theme', isDark ? 'dark' : 'light');
     }, [isDark]);
@@ -203,7 +233,6 @@ export default function SchedulePage() {
         return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
     }, []);
 
-    const groupInfoText = getGroupInfoText(savedSelection);
     const scheduleDays = buildScheduleDays(scheduleData, currentDate);
     const calendarDays = buildCalendarDays(pickerDate, currentDate);
 
@@ -324,7 +353,7 @@ export default function SchedulePage() {
     }
 
     return (
-        <div className="app-container">
+        <div className="app-container" ref={appContainerRef}>
             <header className="main-header">
                 <div className="logo-area">
                     <img src={BRAND_LOGO_SRC} alt="Логотип КАИ" width="110" height="46" />
@@ -400,10 +429,6 @@ export default function SchedulePage() {
                 </div>
             </header>
 
-            <div className="group-info-bar" id="groupInfoBar">
-                <span className="group-info-text" id="groupInfoText">{groupInfoText}</span>
-            </div>
-
             <div className="toolbar">
                 <div className="date-selector-wrapper" ref={dateSelectorRef}>
                     <button
@@ -422,6 +447,11 @@ export default function SchedulePage() {
                         </svg>
                         <span id="dateSelectorText">{dateSelectorText}</span>
                     </button>
+                    <div
+                        className={`dp-scrim ${isDatePickerOpen ? 'active' : ''}`}
+                        aria-hidden="true"
+                        onClick={() => setIsDatePickerOpen(false)}
+                    />
                     <div
                         className={`date-picker-popup ${isDatePickerOpen ? 'active' : ''}`}
                         id="datePickerPopup"
@@ -490,79 +520,59 @@ export default function SchedulePage() {
                         </div>
                     </div>
                 </div>
-                <div className="view-switcher">
-                    <button className="view-btn active">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <rect x="3" y="3" width="7" height="7"></rect>
-                            <rect x="14" y="3" width="7" height="7"></rect>
-                            <rect x="14" y="14" width="7" height="7"></rect>
-                            <rect x="3" y="14" width="7" height="7"></rect>
-                        </svg>
-                    </button>
-                    <button className="view-btn">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <line x1="8" y1="6" x2="21" y2="6"></line>
-                            <line x1="8" y1="12" x2="21" y2="12"></line>
-                            <line x1="8" y1="18" x2="21" y2="18"></line>
-                            <line x1="3" y1="6" x2="3.01" y2="6"></line>
-                            <line x1="3" y1="12" x2="3.01" y2="12"></line>
-                            <line x1="3" y1="18" x2="3.01" y2="18"></line>
-                        </svg>
-                    </button>
-                    <button className="view-btn">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <rect x="3" y="3" width="18" height="18" rx="2"></rect>
-                            <line x1="3" y1="9" x2="21" y2="9"></line>
-                            <line x1="9" y1="21" x2="9" y2="9"></line>
-                        </svg>
-                    </button>
-                    <button className="view-btn">
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2"></rect>
-                            <line x1="16" y1="2" x2="16" y2="6"></line>
-                            <line x1="8" y1="2" x2="8" y2="6"></line>
-                            <line x1="3" y1="10" x2="21" y2="10"></line>
-                        </svg>
-                    </button>
-                </div>
             </div>
 
-            <main
-                className="schedule-grid"
-                id="desktopSchedule"
-                ref={scheduleGridRef}
+            <div
+                className="schedule-grid-wrap"
+                ref={gridWrapRef}
                 style={isMobileView && currentView === 'day' ? { display: 'none' } : undefined}
-                onWheel={(event) => {
-                    if (!isMobileView) {
-                        event.preventDefault();
-                        event.currentTarget.scrollLeft += event.deltaY;
-                    }
-                }}
             >
-                {isLoading && (
-                    <div className="schedule-loading">
-                        <div className="loading-spinner"></div>
-                        Загрузка...
-                    </div>
-                )}
-                {!isLoading && errorMessage && (
-                    <div className="schedule-loading">{errorMessage}</div>
-                )}
-                {!isLoading && !errorMessage && scheduleDays.map((day) => (
-                    <div className="day-column" key={day.id}>
-                        <div className="day-header">
-                            <div className={`day-badge ${day.isToday ? '' : 'hidden'}`}>Сегодня</div>
-                            <div className="day-title">{day.title}</div>
-                            <div className="day-time">{day.timeRange}</div>
+                <main
+                    className="schedule-grid"
+                    id="desktopSchedule"
+                    ref={scheduleGridRef}
+                    onWheel={(event) => {
+                        if (isMobileView) {
+                            return;
+                        }
+
+                        const grid = event.currentTarget;
+                        const scrollContainer = grid.closest('.app-container') || grid.parentElement;
+                        const hasVerticalOverflow = scrollContainer.scrollHeight > scrollContainer.clientHeight + 1;
+
+                        if (hasVerticalOverflow) {
+                            return;
+                        }
+
+                        event.preventDefault();
+                        grid.scrollLeft += event.deltaY;
+                    }}
+                >
+                    {isLoading && (
+                        <div className="schedule-loading">
+                            <div className="loading-spinner"></div>
+                            Загрузка...
                         </div>
-                        {day.isRestDay && (
-                            renderRestDayState()
-                        )}
-                        {day.isNoLessons && <div className="no-lessons">Нет занятий</div>}
-                        {!day.isRestDay && !day.isNoLessons && day.lessons.map((lesson) => renderLessonCard(lesson))}
-                    </div>
-                ))}
-            </main>
+                    )}
+                    {!isLoading && errorMessage && (
+                        <div className="schedule-loading">{errorMessage}</div>
+                    )}
+                    {!isLoading && !errorMessage && scheduleDays.map((day) => (
+                        <div className="day-column" key={day.id}>
+                            <div className="day-header">
+                                <div className={`day-badge ${day.isToday ? '' : 'hidden'}`}>Сегодня</div>
+                                <div className="day-title">{day.title}</div>
+                                <div className="day-time">{day.timeRange}</div>
+                            </div>
+                            {day.isRestDay && (
+                                renderRestDayState()
+                            )}
+                            {day.isNoLessons && <div className="no-lessons">Нет занятий</div>}
+                            {!day.isRestDay && !day.isNoLessons && day.lessons.map((lesson) => renderLessonCard(lesson))}
+                        </div>
+                    ))}
+                </main>
+            </div>
 
             <div
                 className="mobile-day-view"
@@ -604,15 +614,31 @@ export default function SchedulePage() {
                 </div>
             </div>
 
-            <div className="support-widget">
-                <div className="support-icon">
-                    <img src={BRAND_LOGO_SRC} alt="Логотип КАИ" width="72" height="30" />
+            {isSupportVisible && (
+                <div className="support-widget">
+                    <div className="support-icon">
+                        <img src={BRAND_LOGO_SRC} alt="Логотип КАИ" width="72" height="30" />
+                    </div>
+                    <div className="support-text">
+                        <div className="support-title">Есть вопросы?</div>
+                        <div className="support-subtitle">Напишите нам</div>
+                    </div>
+                    <button
+                        type="button"
+                        className="close-support"
+                        aria-label="Закрыть"
+                        onClick={(event) => {
+                            event.stopPropagation();
+                            setIsSupportVisible(false);
+                        }}
+                    >
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <line x1="18" y1="6" x2="6" y2="18"></line>
+                            <line x1="6" y1="6" x2="18" y2="18"></line>
+                        </svg>
+                    </button>
                 </div>
-                <div className="support-text">
-                    <div className="support-title">Есть вопросы?</div>
-                    <div className="support-subtitle">Напишите нам</div>
-                </div>
-            </div>
+            )}
 
             {isCookieVisible && (
                 <div className="cookie-banner" id="cookieBanner">
@@ -627,28 +653,6 @@ export default function SchedulePage() {
             )}
         </div>
     );
-}
-
-function getGroupInfoText(savedSelection) {
-    if (!savedSelection) {
-        return '';
-    }
-
-    const parts = [];
-
-    if (savedSelection.university_name) {
-        parts.push(savedSelection.university_name);
-    }
-
-    if (savedSelection.group_name) {
-        parts.push(`Группа ${savedSelection.group_name}`);
-    }
-
-    if (savedSelection.subgroup) {
-        parts.push(`${savedSelection.subgroup} подгруппа`);
-    }
-
-    return parts.join(' · ');
 }
 
 function buildScheduleDays(scheduleData, currentDate) {
@@ -686,11 +690,12 @@ function buildScheduleDays(scheduleData, currentDate) {
         if (hasExceptionWeek) {
             lessons = lessonsForDay.filter((lesson) => lesson.specific_week === weekNumber);
         } else {
-            lessons = lessonsForDay.filter(
+            const templateCandidates = lessonsForDay.filter(
                 (lesson) =>
                     lesson.specific_week == null &&
                     (lesson.week_type === 0 || lesson.week_type === currentWeekType)
             );
+            lessons = resolveTemplateLessons(templateCandidates, weekNumber);
         }
 
         const isRestDay = (dayOfWeek === 0 || dayOfWeek === 6) && lessons.length === 0;

@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import usePageAssets from '../hooks/usePageAssets';
+import { formatLocalDateForApi, getSemesterWeekNumber } from '../lib/date';
+import { resolveTemplateLessons } from '../lib/templateResolve';
 
 const DAY_NAMES = {
     1: 'Пн',
@@ -13,24 +15,50 @@ const DAY_NAMES = {
 
 DAY_NAMES[7] = '\u0412\u0441';
 
-const WEEK_NAMES = {
-    0: 'Каждую',
-    1: 'Нечёт',
-    2: 'Чёт'
-};
 
 const DEFAULT_EDIT_FORM = {
     id: '',
+    group_id: '',
     day_of_week: 1,
     time_start: '',
     time_end: '',
     subject: '',
     room: '',
     lesson_type: 'Лекция',
+    teacher: '',
     subgroup: 0,
     week_type: 0,
     specific_week: ''
 };
+
+const BUILDER_TIME_SLOTS = [
+    ['08:00', '09:30'],
+    ['09:40', '11:10'],
+    ['11:30', '13:00'],
+    ['13:10', '14:40'],
+    ['15:00', '16:30'],
+    ['16:40', '18:10']
+];
+
+const BUILDER_DAYS = [1, 2, 3, 4, 5, 6, 7];
+
+function getMondayOfWeek(date) {
+    const normalized = new Date(date);
+    normalized.setHours(0, 0, 0, 0);
+    const dayOfWeek = normalized.getDay();
+    const offsetToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
+    normalized.setDate(normalized.getDate() + offsetToMonday);
+    return normalized;
+}
+
+function formatDayMonth(date) {
+    return `${String(date.getDate()).padStart(2, '0')}.${String(date.getMonth() + 1).padStart(2, '0')}`;
+}
+
+function getCourseFromGroupName(name) {
+    const match = String(name).match(/^\d{2}(\d)\d{2}$/);
+    return match ? Number(match[1]) : null;
+}
 
 export default function AdminDashboardPage() {
     const isAssetsReady = usePageAssets({
@@ -45,21 +73,33 @@ export default function AdminDashboardPage() {
     });
 
     const navigate = useNavigate();
-    const [activeSection, setActiveSection] = useState('upload');
-    const [jsonInput, setJsonInput] = useState('');
-    const [targetWeek, setTargetWeek] = useState('template');
-    const [customWeekNumber, setCustomWeekNumber] = useState('');
-    const [uploadStatus, setUploadStatus] = useState({ type: '', message: '' });
-    const [isUploading, setIsUploading] = useState(false);
+    const [activeSection, setActiveSection] = useState('builder');
     const [groups, setGroups] = useState([]);
+    const [universities, setUniversities] = useState([]);
+    const [newGroupUniversityId, setNewGroupUniversityId] = useState('');
+    const [newGroupName, setNewGroupName] = useState('');
+    const [newGroupDirection, setNewGroupDirection] = useState('');
+    const [isCreatingGroup, setIsCreatingGroup] = useState(false);
     const [selectedGroupId, setSelectedGroupId] = useState('');
     const [lessons, setLessons] = useState([]);
-    const [isLessonsLoading, setIsLessonsLoading] = useState(false);
     const [semesterStartDate, setSemesterStartDate] = useState('');
+    const [directorName, setDirectorName] = useState('');
+    const [directorTitle, setDirectorTitle] = useState('Директор филиала');
+    const [academicYear, setAcademicYear] = useState('');
+    const [studyForm, setStudyForm] = useState('очная форма обучения');
+    const [termParity, setTermParity] = useState('spring');
+    const [isExporting, setIsExporting] = useState(false);
+    const [groupDirectionDrafts, setGroupDirectionDrafts] = useState({});
     const [settingsStatus, setSettingsStatus] = useState({ type: '', message: '' });
     const [toastMessage, setToastMessage] = useState('');
+    const [isToastVisible, setIsToastVisible] = useState(false);
     const [editForm, setEditForm] = useState(DEFAULT_EDIT_FORM);
+    const [editMode, setEditMode] = useState('edit');
+    const [editContext, setEditContext] = useState('direct');
     const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+    const [builderMode, setBuilderMode] = useState('week');
+    const [builderWeekStart, setBuilderWeekStart] = useState(() => getMondayOfWeek(new Date()));
+    const [builderTemplateWeekType, setBuilderTemplateWeekType] = useState(1);
     const [auditLogs, setAuditLogs] = useState([]);
     const [isAuditLogsLoading, setIsAuditLogsLoading] = useState(false);
     const [backups, setBackups] = useState([]);
@@ -87,7 +127,7 @@ export default function AdminDashboardPage() {
 
                 setCsrfToken(sessionData.csrf_token || '');
 
-                await Promise.all([loadGroups(), loadSettings(), loadAuditLogs(), loadBackups()]);
+                await Promise.all([loadGroups(), loadUniversities(), loadSettings(), loadAuditLogs(), loadBackups()]);
             } catch {
                 if (!ignore) {
                     navigate('/admin', { replace: true });
@@ -107,8 +147,10 @@ export default function AdminDashboardPage() {
             return undefined;
         }
 
+        setIsToastVisible(true);
+
         const timeout = window.setTimeout(() => {
-            setToastMessage('');
+            setIsToastVisible(false);
         }, 3000);
 
         return () => window.clearTimeout(timeout);
@@ -122,6 +164,7 @@ export default function AdminDashboardPage() {
 
         loadLessons(selectedGroupId);
     }, [selectedGroupId]);
+
 
     function isUnsafeMethod(method = 'GET') {
         return !['GET', 'HEAD', 'OPTIONS'].includes(method.toUpperCase());
@@ -190,9 +233,17 @@ export default function AdminDashboardPage() {
         }
     }
 
-    async function loadLessons(groupId) {
-        setIsLessonsLoading(true);
+    async function loadUniversities() {
+        try {
+            const response = await fetch('/api/universities');
+            const data = await response.json();
+            setUniversities(Array.isArray(data) ? data : []);
+        } catch {
+            setUniversities([]);
+        }
+    }
 
+    async function loadLessons(groupId) {
         try {
             const response = await api(`/api/admin/lessons?group_id=${groupId}`);
             const data = await response.json();
@@ -202,8 +253,6 @@ export default function AdminDashboardPage() {
                 setToastMessage('Не удалось загрузить занятия');
                 setLessons([]);
             }
-        } finally {
-            setIsLessonsLoading(false);
         }
     }
 
@@ -215,6 +264,12 @@ export default function AdminDashboardPage() {
             if (data.semester_start_date) {
                 setSemesterStartDate(data.semester_start_date);
             }
+
+            if (data.director_name) setDirectorName(data.director_name);
+            if (data.director_title) setDirectorTitle(data.director_title);
+            if (data.academic_year) setAcademicYear(data.academic_year);
+            if (data.study_form) setStudyForm(data.study_form);
+            if (data.term_parity) setTermParity(data.term_parity);
         } catch (error) {
             if (error.message !== 'UNAUTHORIZED') {
                 setToastMessage('Не удалось загрузить настройки');
@@ -290,99 +345,19 @@ export default function AdminDashboardPage() {
         }
     }
 
-    async function handleUploadSchedule() {
-        const trimmedJson = jsonInput.trim();
-
-        if (!trimmedJson) {
-            setUploadStatus({ type: 'error', message: 'Вставьте JSON' });
-            return;
-        }
-
-        let payload;
-
-        try {
-            payload = JSON.parse(trimmedJson);
-        } catch (error) {
-            setUploadStatus({ type: 'error', message: `Ошибка парсинга JSON: ${error.message}` });
-            return;
-        }
-
-        const weekValue = targetWeek === 'custom'
-            ? (() => {
-                if (!customWeekNumber.trim()) {
-                    setUploadStatus({ type: 'error', message: 'Введите номер недели' });
-                    return null;
-                }
-                return Number(customWeekNumber.trim());
-            })()
-            : targetWeek;
-
-        if (weekValue === null) return;
-
-        payload.target_week = weekValue;
-
-        if (weekValue === 'current') {
-            const { formatLocalDateForApi } = await import('../lib/date.js');
-            payload.reference_date = formatLocalDateForApi(new Date());
-        }
-
-        const isBulk = Array.isArray(payload.groups);
-        const endpoint = isBulk ? '/api/admin/schedule/upload-bulk' : '/api/admin/schedule/upload';
-
-        setIsUploading(true);
-        setUploadStatus({ type: '', message: '' });
-
-        try {
-            const response = await api(endpoint, {
-                method: 'POST',
-                body: JSON.stringify(payload)
-            });
-            const result = await response.json();
-
-            if (!response.ok) {
-                setUploadStatus({ type: 'error', message: result.error || 'Ошибка загрузки' });
-                return;
-            }
-
-            const appliedMessage = result.applied_to === 'template'
-                ? 'как шаблон семестра'
-                : `на неделю ${result.specific_week}`;
-
-            if (isBulk) {
-                setUploadStatus({
-                    type: 'success',
-                    message: `Загружено ${result.total_imported} занятий для ${result.groups.length} групп (${appliedMessage})`
-                });
-                setToastMessage(`Расписание для ${result.groups.length} групп обновлено`);
-            } else {
-                setUploadStatus({
-                    type: 'success',
-                    message: `Загружено ${result.imported} занятий для группы ${result.group} (${appliedMessage})`
-                });
-                setToastMessage(`Расписание для ${result.group} обновлено`);
-            }
-
-            if (selectedGroupId) {
-                loadLessons(selectedGroupId);
-            }
-        } catch (error) {
-            if (error.message !== 'UNAUTHORIZED') {
-                setUploadStatus({ type: 'error', message: 'Ошибка сети' });
-            }
-        } finally {
-            setIsUploading(false);
-        }
-    }
-
-    function openEditModal(lesson) {
+    function openEditModal(lesson, context = 'direct') {
+        setEditMode('edit');
+        setEditContext(context);
         setEditForm({
             id: lesson.id,
+            group_id: lesson.group_id,
             day_of_week: lesson.day_of_week,
             time_start: lesson.time_start,
             time_end: lesson.time_end,
             subject: lesson.subject,
             room: lesson.room || '',
             lesson_type: lesson.lesson_type || 'Лекция',
+            teacher: lesson.teacher || '',
             subgroup: lesson.subgroup,
             week_type: lesson.week_type,
             specific_week: lesson.specific_week ?? ''
@@ -390,11 +365,159 @@ export default function AdminDashboardPage() {
         setIsEditModalOpen(true);
     }
 
+    const builderWeekEnd = new Date(builderWeekStart);
+    builderWeekEnd.setDate(builderWeekEnd.getDate() + 6);
+
+    const builderWeekNumber = semesterStartDate
+        ? getSemesterWeekNumber(semesterStartDate, builderWeekStart)
+        : null;
+
+    const todayWeekNumber = semesterStartDate
+        ? getSemesterWeekNumber(semesterStartDate, new Date())
+        : null;
+
+    const builderWeekMaterialized = builderWeekNumber !== null
+        && lessons.some((lesson) => lesson.specific_week === builderWeekNumber);
+
+    function openCreateModal(day, timeStart, timeEnd, subgroup, context = 'direct') {
+        if (!selectedGroupId) {
+            setToastMessage('Сначала выберите группу');
+            return;
+        }
+
+        const targetWeekNumber = context === 'template' ? todayWeekNumber : builderWeekNumber;
+
+        if (targetWeekNumber === null) {
+            setToastMessage('Сначала задайте дату начала семестра в разделе «Настройки»');
+            return;
+        }
+
+        setEditMode('create');
+        setEditContext(context);
+        setEditForm({
+            id: '',
+            group_id: selectedGroupId,
+            day_of_week: day,
+            time_start: timeStart,
+            time_end: timeEnd,
+            subject: '',
+            room: '',
+            lesson_type: 'Лекция',
+            teacher: '',
+            subgroup,
+            week_type: context === 'template' ? builderTemplateWeekType : 0,
+            specific_week: context === 'template' ? '' : targetWeekNumber
+        });
+        setIsEditModalOpen(true);
+    }
+
+    function getBuilderCellLessons(day, timeStart, timeEnd) {
+        if (builderWeekNumber === null) {
+            return [];
+        }
+
+        if (builderWeekMaterialized) {
+            return lessons.filter((lesson) =>
+                lesson.day_of_week === day &&
+                lesson.time_start === timeStart &&
+                lesson.time_end === timeEnd &&
+                lesson.specific_week === builderWeekNumber
+            );
+        }
+
+        const weekTypeNumber = builderWeekNumber % 2 === 0 ? 2 : 1;
+        const candidates = lessons.filter((lesson) =>
+            lesson.day_of_week === day &&
+            lesson.time_start === timeStart &&
+            lesson.time_end === timeEnd &&
+            lesson.specific_week == null &&
+            (lesson.week_type === 0 || lesson.week_type === weekTypeNumber)
+        );
+
+        return resolveTemplateLessons(candidates, builderWeekNumber);
+    }
+
+    function getTemplateCellLessons(day, timeStart, timeEnd) {
+        if (todayWeekNumber === null) {
+            return [];
+        }
+
+        const candidates = lessons.filter((lesson) =>
+            lesson.day_of_week === day &&
+            lesson.time_start === timeStart &&
+            lesson.time_end === timeEnd &&
+            lesson.specific_week == null &&
+            lesson.week_type === builderTemplateWeekType
+        );
+
+        return resolveTemplateLessons(candidates, todayWeekNumber);
+    }
+
+    function renderGridCell(day, timeStart, timeEnd, cellLessons, context) {
+        const full = cellLessons.find((lesson) => lesson.subgroup === 0);
+
+        if (full) {
+            return (
+                <button type="button" className="builder-lesson-card" onClick={() => openEditModal(full, context)}>
+                    <span className="builder-lesson-subject">{full.subject}</span>
+                    <span className="builder-lesson-meta">
+                        {full.lesson_type && <span>{full.lesson_type}</span>}
+                        {full.room && <span className="builder-lesson-room">{full.room}</span>}
+                    </span>
+                    {full.teacher && <span className="builder-lesson-teacher" title={full.teacher}>{full.teacher}</span>}
+                </button>
+            );
+        }
+
+        const sub1 = cellLessons.find((lesson) => lesson.subgroup === 1);
+        const sub2 = cellLessons.find((lesson) => lesson.subgroup === 2);
+
+        if (sub1 || sub2) {
+            return (
+                <div className="builder-cell-split">
+                    {sub1 ? (
+                        <button type="button" className="builder-lesson-card half" onClick={() => openEditModal(sub1, context)}>
+                            <span className="builder-lesson-subgroup-tag">1 п/г</span>
+                            <span className="builder-lesson-subject">{sub1.subject}</span>
+                            {sub1.room && <span className="builder-lesson-room">{sub1.room}</span>}
+                            {sub1.teacher && <span className="builder-lesson-teacher" title={sub1.teacher}>{sub1.teacher}</span>}
+                        </button>
+                    ) : (
+                        <button type="button" className="builder-add-btn half" onClick={() => openCreateModal(day, timeStart, timeEnd, 1, context)}>+</button>
+                    )}
+                    {sub2 ? (
+                        <button type="button" className="builder-lesson-card half" onClick={() => openEditModal(sub2, context)}>
+                            <span className="builder-lesson-subgroup-tag">2 п/г</span>
+                            <span className="builder-lesson-subject">{sub2.subject}</span>
+                            {sub2.room && <span className="builder-lesson-room">{sub2.room}</span>}
+                            {sub2.teacher && <span className="builder-lesson-teacher" title={sub2.teacher}>{sub2.teacher}</span>}
+                        </button>
+                    ) : (
+                        <button type="button" className="builder-add-btn half" onClick={() => openCreateModal(day, timeStart, timeEnd, 2, context)}>+</button>
+                    )}
+                </div>
+            );
+        }
+
+        return (
+            <button type="button" className="builder-add-btn" onClick={() => openCreateModal(day, timeStart, timeEnd, 0, context)}>+</button>
+        );
+    }
+
+    function renderBuilderCell(day, timeStart, timeEnd) {
+        const context = builderWeekMaterialized ? 'direct' : 'materialize';
+        return renderGridCell(day, timeStart, timeEnd, getBuilderCellLessons(day, timeStart, timeEnd), context);
+    }
+
+    function renderTemplateCell(day, timeStart, timeEnd) {
+        return renderGridCell(day, timeStart, timeEnd, getTemplateCellLessons(day, timeStart, timeEnd), 'template');
+    }
+
     async function deleteLesson(lessonId) {
         const shouldDelete = window.confirm('Удалить это занятие?');
 
         if (!shouldDelete) {
-            return;
+            return false;
         }
 
         try {
@@ -405,15 +528,115 @@ export default function AdminDashboardPage() {
             if (!response.ok) {
                 const data = await response.json();
                 setToastMessage(data.error || 'Не удалось удалить занятие');
-                return;
+                return false;
             }
 
             setToastMessage('Занятие удалено');
             loadLessons(selectedGroupId);
+            return true;
         } catch (error) {
             if (error.message !== 'UNAUTHORIZED') {
                 setToastMessage('Ошибка сети');
             }
+            return false;
+        }
+    }
+
+    async function handleDeleteFromModal() {
+        if (editContext === 'template') {
+            const shouldRemove = window.confirm(
+                'Убрать это занятие из шаблона начиная с текущей недели? Прошлые недели не изменятся.'
+            );
+
+            if (!shouldRemove) {
+                return;
+            }
+
+            try {
+                const response = await api('/api/admin/lessons', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        group_id: Number(editForm.group_id),
+                        day_of_week: Number(editForm.day_of_week),
+                        time_start: editForm.time_start,
+                        time_end: editForm.time_end,
+                        subject: editForm.subject,
+                        room: editForm.room,
+                        lesson_type: editForm.lesson_type,
+                        subgroup: Number(editForm.subgroup),
+                        week_type: Number(editForm.week_type),
+                        specific_week: null,
+                        template_from_week: todayWeekNumber,
+                        is_removed: true
+                    })
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    setToastMessage(data.error || 'Не удалось убрать занятие из шаблона');
+                    return;
+                }
+
+                setToastMessage('Занятие убрано из шаблона начиная с этой недели');
+                setIsEditModalOpen(false);
+                setEditForm(DEFAULT_EDIT_FORM);
+                loadLessons(selectedGroupId);
+            } catch (error) {
+                if (error.message !== 'UNAUTHORIZED') {
+                    setToastMessage('Ошибка сети');
+                }
+            }
+
+            return;
+        }
+
+        if (editContext === 'materialize') {
+            const shouldRemove = window.confirm(
+                'Убрать эту пару из недели? Остальные пары шаблона будут сохранены для этой недели как есть.'
+            );
+
+            if (!shouldRemove) {
+                return;
+            }
+
+            try {
+                const response = await api('/api/admin/schedule/materialize-week', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        group_id: Number(editForm.group_id),
+                        week_number: builderWeekNumber,
+                        action: 'remove',
+                        day_of_week: Number(editForm.day_of_week),
+                        time_start: editForm.time_start,
+                        time_end: editForm.time_end,
+                        subgroup: Number(editForm.subgroup)
+                    })
+                });
+
+                if (!response.ok) {
+                    const data = await response.json();
+                    setToastMessage(data.error || 'Не удалось убрать пару');
+                    return;
+                }
+
+                setToastMessage('Пара убрана из этой недели');
+                setIsEditModalOpen(false);
+                setEditForm(DEFAULT_EDIT_FORM);
+                loadLessons(selectedGroupId);
+            } catch (error) {
+                if (error.message !== 'UNAUTHORIZED') {
+                    setToastMessage('Ошибка сети');
+                }
+            }
+
+            return;
+        }
+
+        const deleted = await deleteLesson(editForm.id);
+
+        if (deleted) {
+            setIsEditModalOpen(false);
+            setEditForm(DEFAULT_EDIT_FORM);
         }
     }
 
@@ -427,27 +650,206 @@ export default function AdminDashboardPage() {
             subject: editForm.subject,
             room: editForm.room,
             lesson_type: editForm.lesson_type,
+            teacher: editForm.teacher,
             subgroup: Number(editForm.subgroup),
             week_type: Number(editForm.week_type),
             specific_week: editForm.specific_week
         };
 
         try {
-            const response = await api(`/api/admin/lessons/${editForm.id}`, {
-                method: 'PUT',
-                body: JSON.stringify(body)
-            });
+            let response;
+
+            if (editContext === 'template') {
+                // Template edits are always inserted as a new version — existing rows
+                // (and therefore past weeks that resolved to them) are never mutated.
+                response = await api('/api/admin/lessons', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        ...body,
+                        group_id: Number(editForm.group_id),
+                        specific_week: null,
+                        template_from_week: todayWeekNumber
+                    })
+                });
+            } else if (editContext === 'materialize') {
+                // First real change to a still-template-driven week: clone the rest of
+                // that week's resolved template into real rows in the same transaction,
+                // so the untouched pairs don't silently vanish (override replaces the
+                // whole week, it never merges with the template).
+                response = await api('/api/admin/schedule/materialize-week', {
+                    method: 'POST',
+                    body: JSON.stringify({
+                        group_id: Number(editForm.group_id),
+                        week_number: builderWeekNumber,
+                        action: 'upsert',
+                        day_of_week: Number(editForm.day_of_week),
+                        time_start: editForm.time_start,
+                        time_end: editForm.time_end,
+                        subgroup: Number(editForm.subgroup),
+                        subject: editForm.subject,
+                        room: editForm.room,
+                        lesson_type: editForm.lesson_type,
+                        teacher: editForm.teacher
+                    })
+                });
+            } else if (editMode === 'create') {
+                response = await api('/api/admin/lessons', {
+                    method: 'POST',
+                    body: JSON.stringify({ ...body, group_id: Number(editForm.group_id) })
+                });
+            } else {
+                response = await api(`/api/admin/lessons/${editForm.id}`, {
+                    method: 'PUT',
+                    body: JSON.stringify(body)
+                });
+            }
 
             if (!response.ok) {
                 const data = await response.json();
-                setToastMessage(data.error || 'Не удалось обновить занятие');
+                setToastMessage(data.error || (editMode === 'create' ? 'Не удалось добавить занятие' : 'Не удалось обновить занятие'));
                 return;
             }
 
             setIsEditModalOpen(false);
             setEditForm(DEFAULT_EDIT_FORM);
-            setToastMessage('Занятие обновлено');
+            setToastMessage(editMode === 'create' ? 'Занятие добавлено' : 'Занятие обновлено');
             loadLessons(selectedGroupId);
+        } catch (error) {
+            if (error.message !== 'UNAUTHORIZED') {
+                setToastMessage('Ошибка сети');
+            }
+        }
+    }
+
+    async function handleClearWeek() {
+        if (!selectedGroupId || builderWeekNumber === null) {
+            return;
+        }
+
+        const shouldClear = window.confirm(
+            'Стереть все правки этой недели и вернуться к шаблону? Действие необратимо.'
+        );
+
+        if (!shouldClear) {
+            return;
+        }
+
+        try {
+            const response = await api(
+                `/api/admin/schedule/week?group_id=${selectedGroupId}&week_number=${builderWeekNumber}`,
+                { method: 'DELETE' }
+            );
+
+            if (!response.ok) {
+                const data = await response.json();
+                setToastMessage(data.error || 'Не удалось очистить неделю');
+                return;
+            }
+
+            setToastMessage('Неделя очищена — показывается шаблон');
+            loadLessons(selectedGroupId);
+        } catch (error) {
+            if (error.message !== 'UNAUTHORIZED') {
+                setToastMessage('Ошибка сети');
+            }
+        }
+    }
+
+    async function handleExport() {
+        setIsExporting(true);
+
+        try {
+            const params = new URLSearchParams({
+                week_start: formatLocalDateForApi(builderWeekStart)
+            });
+
+            const response = await api(`/api/admin/schedule/export?${params.toString()}`);
+
+            if (!response.ok) {
+                const data = await response.json();
+                setToastMessage(data.error || 'Не удалось сформировать файл расписания');
+                return;
+            }
+
+            const blob = await response.blob();
+            const url = URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `raspisanie_${formatLocalDateForApi(builderWeekStart)}.xlsx`;
+            document.body.appendChild(link);
+            link.click();
+            link.remove();
+            URL.revokeObjectURL(url);
+        } catch (error) {
+            if (error.message !== 'UNAUTHORIZED') {
+                setToastMessage('Ошибка сети');
+            }
+        } finally {
+            setIsExporting(false);
+        }
+    }
+
+    async function handleCreateGroup() {
+        if (!newGroupUniversityId) {
+            setToastMessage('Выберите вуз');
+            return;
+        }
+
+        if (!newGroupName.trim()) {
+            setToastMessage('Введите номер группы');
+            return;
+        }
+
+        setIsCreatingGroup(true);
+
+        try {
+            const response = await api('/api/admin/groups', {
+                method: 'POST',
+                body: JSON.stringify({
+                    university_id: Number(newGroupUniversityId),
+                    name: newGroupName.trim(),
+                    direction: newGroupDirection.trim()
+                })
+            });
+
+            const data = await response.json();
+
+            if (!response.ok) {
+                setToastMessage(data.error || 'Не удалось добавить группу');
+                return;
+            }
+
+            setGroups((previous) => [...previous, data].sort((a, b) => a.name.localeCompare(b.name)));
+            setToastMessage(`Группа ${data.name} добавлена`);
+            setNewGroupName('');
+            setNewGroupDirection('');
+        } catch (error) {
+            if (error.message !== 'UNAUTHORIZED') {
+                setToastMessage('Ошибка сети');
+            }
+        } finally {
+            setIsCreatingGroup(false);
+        }
+    }
+
+    async function handleSaveGroupDirection(groupId) {
+        const direction = groupDirectionDrafts[groupId] ?? '';
+
+        try {
+            const response = await api(`/api/admin/groups/${groupId}`, {
+                method: 'PUT',
+                body: JSON.stringify({ direction })
+            });
+
+            if (!response.ok) {
+                const data = await response.json();
+                setToastMessage(data.error || 'Не удалось сохранить направление');
+                return;
+            }
+
+            const updated = await response.json();
+            setGroups((previous) => previous.map((group) => (group.id === groupId ? updated : group)));
+            setToastMessage('Направление сохранено');
         } catch (error) {
             if (error.message !== 'UNAUTHORIZED') {
                 setToastMessage('Ошибка сети');
@@ -460,7 +862,12 @@ export default function AdminDashboardPage() {
             const response = await api('/api/admin/settings', {
                 method: 'PUT',
                 body: JSON.stringify({
-                    semester_start_date: semesterStartDate
+                    semester_start_date: semesterStartDate,
+                    director_name: directorName,
+                    director_title: directorTitle,
+                    academic_year: academicYear,
+                    study_form: studyForm,
+                    term_parity: termParity
                 })
             });
 
@@ -479,23 +886,6 @@ export default function AdminDashboardPage() {
         }
     }
 
-    function renderWeekLabel(lesson) {
-        if (lesson.specific_week !== null) {
-            return (
-                <span className="week-label" style={{ background: '#ffd700', color: '#000' }}>
-                    Искл: Неделя {lesson.specific_week}
-                </span>
-            );
-        }
-
-        const className = lesson.week_type === 1 ? 'week-label odd' : lesson.week_type === 2 ? 'week-label even' : 'week-label';
-        return (
-            <span className={className}>
-                {WEEK_NAMES[lesson.week_type] || '—'}
-            </span>
-        );
-    }
-
     if (!isAssetsReady) {
         return null;
     }
@@ -505,25 +895,18 @@ export default function AdminDashboardPage() {
             <aside className="sidebar">
                 <div className="sidebar-header">
                     <img src="/assets/logo.png" alt="Логотип КАИ" width="108" height="45" />
-                    <span className="sidebar-title">ANTI VUZ</span>
+                    <span className="sidebar-title">КАИ Расписание</span>
                 </div>
                 <nav className="sidebar-nav">
-                    <button className={`nav-item ${activeSection === 'upload' ? 'active' : ''}`} data-section="upload" id="navUpload" onClick={() => setActiveSection('upload')}>
+                    <button className={`nav-item ${activeSection === 'builder' ? 'active' : ''}`} data-section="builder" id="navBuilder" onClick={() => setActiveSection('builder')}>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4" />
-                            <polyline points="17 8 12 3 7 8" />
-                            <line x1="12" y1="3" x2="12" y2="15" />
+                            <rect x="3" y="3" width="18" height="18" rx="2" ry="2" />
+                            <line x1="3" y1="9" x2="21" y2="9" />
+                            <line x1="3" y1="15" x2="21" y2="15" />
+                            <line x1="9" y1="9" x2="9" y2="21" />
+                            <line x1="15" y1="9" x2="15" y2="21" />
                         </svg>
-                        Загрузка
-                    </button>
-                    <button className={`nav-item ${activeSection === 'lessons' ? 'active' : ''}`} data-section="lessons" id="navLessons" onClick={() => setActiveSection('lessons')}>
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-                            <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                            <line x1="16" y1="2" x2="16" y2="6" />
-                            <line x1="8" y1="2" x2="8" y2="6" />
-                            <line x1="3" y1="10" x2="21" y2="10" />
-                        </svg>
-                        Занятия
+                        Конструктор
                     </button>
                     <button className={`nav-item ${activeSection === 'settings' ? 'active' : ''}`} data-section="settings" id="navSettings" onClick={() => setActiveSection('settings')}>
                         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -581,66 +964,12 @@ export default function AdminDashboardPage() {
             </aside>
 
             <main className="main-content">
-                <section className={`content-section ${activeSection === 'upload' ? 'active' : ''}`} id="sectionUpload">
-                    <h2 className="section-title">Загрузка расписания</h2>
-                    <p className="section-desc">Здесь задаётся либо шаблон семестра, либо конкретная неделя с изменениями.</p>
-                    <div className="upload-area">
-                        <div className="form-row" style={{ marginBottom: '1rem' }}>
-                            <label htmlFor="targetWeekSelect">Применить к:</label>
-                            <select
-                                id="targetWeekSelect"
-                                className="form-input"
-                                style={{ marginTop: '0.5rem' }}
-                                value={targetWeek}
-                                onChange={(event) => setTargetWeek(event.target.value)}
-                            >
-                                <option value="template">Шаблону семестра</option>
-                                <option value="current">Текущей неделе</option>
-                                <option value="custom">Указанной неделе...</option>
-                            </select>
-                            <input
-                                type="number"
-                                id="customWeekNumber"
-                                className="form-input"
-                                style={{ display: targetWeek === 'custom' ? 'block' : 'none', marginTop: '0.5rem' }}
-                                min="1"
-                                placeholder="Введите номер недели"
-                                value={customWeekNumber}
-                                onChange={(event) => setCustomWeekNumber(event.target.value)}
-                            />
-                        </div>
-                        <textarea
-                            id="jsonInput"
-                            className="json-textarea"
-                            placeholder='{"university":"КНИТУ-КАИ","group":"23113","lessons":[{"day":1,"subgroup":0,"time_start":"09:40","time_end":"11:10","subject":"Высшая математика","room":"305 каб.","type":"Лекция","week_type":"all"}]}'
-                            value={jsonInput}
-                            onChange={(event) => setJsonInput(event.target.value)}
-                        ></textarea>
-                        <div className="upload-actions">
-                            <button className="btn btn-primary" id="uploadBtn" onClick={handleUploadSchedule} disabled={isUploading}>
-                                {isUploading ? 'Загрузка...' : 'Загрузить расписание'}
-                            </button>
-                            <span className={`upload-status ${uploadStatus.type}`} id="uploadStatus">
-                                {uploadStatus.message}
-                            </span>
-                        </div>
-                    </div>
-                    <div className="format-hint">
-                        <h3>Формат JSON</h3>
-                        <p><strong>Одна группа:</strong> <code>{'"group": "23113", "university": "...", "lessons": [...]'}</code></p>
-                        <p><strong>Все группы сразу:</strong> <code>{'"groups": [{"group": "23113", "lessons": [...]}, ...]'}</code></p>
-                        <p style={{ marginTop: '0.5rem' }}><strong>day:</strong> 1=Пн, 2=Вт, 3=Ср, 4=Чт, 5=Пт, 6=Сб, 7={'Вс'}</p>
-                        <p><strong>subgroup:</strong> 0=обе, 1=первая, 2=вторая</p>
-                        <p><strong>week_type:</strong> "all", "odd", "even"</p>
-                        <p><strong>Важно:</strong> шаблон и конкретная неделя хранятся отдельно. Bulk-загрузка атомарная — либо все группы, либо ни одна.</p>
-                    </div>
-                </section>
+                <section className={`content-section ${activeSection === 'builder' ? 'active' : ''}`} id="sectionBuilder">
+                    <h2 className="section-title">Конструктор расписания</h2>
+                    <p className="section-desc">Добавляйте и редактируйте занятия прямо на сетке недели — так они лягут и в само расписание.</p>
 
-                <section className={`content-section ${activeSection === 'lessons' ? 'active' : ''}`} id="sectionLessons">
-                    <h2 className="section-title">Управление занятиями</h2>
-                    <div className="lessons-toolbar">
+                    <div className="builder-toolbar">
                         <select
-                            id="groupSelect"
                             className="group-select"
                             value={selectedGroupId}
                             onChange={(event) => setSelectedGroupId(event.target.value)}
@@ -652,47 +981,113 @@ export default function AdminDashboardPage() {
                                 </option>
                             ))}
                         </select>
-                        <button className="btn btn-secondary" id="refreshLessonsBtn" onClick={() => loadLessons(selectedGroupId)}>
-                            Обновить
-                        </button>
+
+                        <div className="builder-tabs">
+                            <button type="button" className={`builder-tab ${builderMode === 'week' ? 'active' : ''}`} onClick={() => setBuilderMode('week')}>По неделям</button>
+                            <button type="button" className={`builder-tab ${builderMode === 'template' ? 'active' : ''}`} onClick={() => setBuilderMode('template')}>Шаблон</button>
+                        </div>
+
+                        {builderMode === 'week' ? (
+                            <div className="builder-week-nav">
+                                <button
+                                    type="button"
+                                    className="week-nav-btn"
+                                    onClick={() => setBuilderWeekStart((start) => {
+                                        const prev = new Date(start);
+                                        prev.setDate(prev.getDate() - 7);
+                                        return prev;
+                                    })}
+                                    aria-label="Предыдущая неделя"
+                                >
+                                    ‹
+                                </button>
+                                <div className="builder-week-current">
+                                    {formatDayMonth(builderWeekStart)}
+                                    {' – '}
+                                    {formatDayMonth(builderWeekEnd)}.{builderWeekEnd.getFullYear()}
+                                </div>
+                                <button
+                                    type="button"
+                                    className="week-nav-btn"
+                                    onClick={() => setBuilderWeekStart((start) => {
+                                        const next = new Date(start);
+                                        next.setDate(next.getDate() + 7);
+                                        return next;
+                                    })}
+                                    aria-label="Следующая неделя"
+                                >
+                                    ›
+                                </button>
+                            </div>
+                        ) : (
+                            <div className="builder-tabs">
+                                <button type="button" className={`builder-tab ${builderTemplateWeekType === 1 ? 'active' : ''}`} onClick={() => setBuilderTemplateWeekType(1)}>Нечётная</button>
+                                <button type="button" className={`builder-tab ${builderTemplateWeekType === 2 ? 'active' : ''}`} onClick={() => setBuilderTemplateWeekType(2)}>Чётная</button>
+                            </div>
+                        )}
                     </div>
-                    <div className="lessons-table-wrapper">
-                        <table className="lessons-table" id="lessonsTable">
-                            <thead>
-                                <tr>
-                                    <th>День</th>
-                                    <th>Время</th>
-                                    <th>Предмет</th>
-                                    <th>Кабинет</th>
-                                    <th>Тип</th>
-                                    <th>Подгр.</th>
-                                    <th>Неделя</th>
-                                    <th></th>
-                                </tr>
-                            </thead>
-                            <tbody id="lessonsBody">
-                                {lessons.map((lesson) => (
-                                    <tr data-id={lesson.id} key={lesson.id}>
-                                        <td><span className="day-label">{DAY_NAMES[lesson.day_of_week] || lesson.day_of_week}</span></td>
-                                        <td>{lesson.time_start}—{lesson.time_end}</td>
-                                        <td><strong>{lesson.subject}</strong></td>
-                                        <td>{lesson.room || '—'}</td>
-                                        <td>{lesson.lesson_type || '—'}</td>
-                                        <td>{lesson.subgroup === 0 ? 'Все' : lesson.subgroup}</td>
-                                        <td>{renderWeekLabel(lesson)}</td>
-                                        <td>
-                                            <button className="btn-edit" onClick={() => openEditModal(lesson)}>Ред.</button>
-                                            <button className="btn-danger" onClick={() => deleteLesson(lesson.id)}>Удал.</button>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                        <p className="empty-message" id="emptyMessage" style={{ display: !selectedGroupId || lessons.length === 0 ? '' : 'none' }}>
-                            {isLessonsLoading ? 'Загрузка занятий...' : 'Выберите группу для просмотра занятий'}
+
+                    {builderMode === 'week' && builderWeekNumber !== null && (
+                        <div className="builder-export-row">
+                            {selectedGroupId && builderWeekMaterialized && (
+                                <button type="button" className="btn btn-delete" onClick={handleClearWeek}>
+                                    Очистить и вернуть к шаблону
+                                </button>
+                            )}
+                            <button type="button" className="btn btn-secondary" onClick={handleExport} disabled={isExporting}>
+                                {isExporting ? 'Формирование...' : 'Скачать расписание всех курсов (.xlsx)'}
+                            </button>
+                        </div>
+                    )}
+
+                    {builderMode === 'week' && selectedGroupId && builderWeekNumber !== null && !builderWeekMaterialized && (
+                        <p className="builder-hint">
+                            Сейчас показан шаблон для этой недели. Любое изменение сохранит всю неделю как отдельную копию — прошлые и другие недели не затронет.
                         </p>
-                    </div>
+                    )}
+
+                    {builderMode === 'template' && (
+                        <p className="builder-hint">
+                            Изменения в шаблоне вступают в силу с текущей недели. Уже прошедшие недели останутся такими, какими были показаны.
+                        </p>
+                    )}
+
+                    {!selectedGroupId ? (
+                        <p className="empty-message">Выберите группу, чтобы начать редактирование</p>
+                    ) : builderMode === 'week' && builderWeekNumber === null ? (
+                        <p className="empty-message">Задайте дату начала семестра в разделе «Настройки», чтобы редактировать расписание по неделям</p>
+                    ) : builderMode === 'template' && todayWeekNumber === null ? (
+                        <p className="empty-message">Задайте дату начала семестра в разделе «Настройки», чтобы редактировать шаблон</p>
+                    ) : (
+                        <div className="builder-grid-wrapper">
+                            <div className="builder-grid">
+                                <div className="builder-row builder-header-row">
+                                    <div className="builder-slot-label"></div>
+                                    <div className="builder-row-cells">
+                                        {BUILDER_DAYS.map((day) => (
+                                            <div className="builder-day-header" key={day}>{DAY_NAMES[day]}</div>
+                                        ))}
+                                    </div>
+                                </div>
+                                {BUILDER_TIME_SLOTS.map(([start, end]) => (
+                                    <div className="builder-row" key={`${start}-${end}`}>
+                                        <div className="builder-slot-label">{start}–{end}</div>
+                                        <div className="builder-row-cells">
+                                            {BUILDER_DAYS.map((day) => (
+                                                <div className="builder-cell" key={day}>
+                                                    {builderMode === 'week'
+                                                        ? renderBuilderCell(day, start, end)
+                                                        : renderTemplateCell(day, start, end)}
+                                                </div>
+                                            ))}
+                                        </div>
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </section>
+
 
                 <section className={`content-section ${activeSection === 'settings' ? 'active' : ''}`} id="sectionSettings">
                     <h2 className="section-title">Настройки</h2>
@@ -708,12 +1103,152 @@ export default function AdminDashboardPage() {
                                 onChange={(event) => setSemesterStartDate(event.target.value)}
                             />
                         </div>
+                        <div className="setting-row">
+                            <label htmlFor="termParity">Текущий семестр (осенний/весенний)</label>
+                            <p className="setting-hint">Вместе с курсом группы определяет номер семестра в шапке экспорта (I/III/V/VII — осенний, II/IV/VI/VIII — весенний)</p>
+                            <select
+                                id="termParity"
+                                className="setting-input"
+                                value={termParity}
+                                onChange={(event) => setTermParity(event.target.value)}
+                            >
+                                <option value="spring">Весенний</option>
+                                <option value="fall">Осенний</option>
+                            </select>
+                        </div>
+                        <div className="setting-row">
+                            <label htmlFor="academicYear">Учебный год</label>
+                            <p className="setting-hint">Используется в шапке при экспорте в Excel, например «2025/2026»</p>
+                            <input
+                                type="text"
+                                id="academicYear"
+                                className="setting-input"
+                                placeholder="2025/2026"
+                                value={academicYear}
+                                onChange={(event) => setAcademicYear(event.target.value)}
+                            />
+                        </div>
+                        <div className="setting-row">
+                            <label htmlFor="studyForm">Форма обучения</label>
+                            <input
+                                type="text"
+                                id="studyForm"
+                                className="setting-input"
+                                placeholder="очная форма обучения"
+                                value={studyForm}
+                                onChange={(event) => setStudyForm(event.target.value)}
+                            />
+                        </div>
+                        <div className="setting-row">
+                            <label htmlFor="directorTitle">Должность подписанта</label>
+                            <input
+                                type="text"
+                                id="directorTitle"
+                                className="setting-input"
+                                placeholder="Директор филиала"
+                                value={directorTitle}
+                                onChange={(event) => setDirectorTitle(event.target.value)}
+                            />
+                        </div>
+                        <div className="setting-row">
+                            <label htmlFor="directorName">ФИО подписанта</label>
+                            <p className="setting-hint">Появляется в шапке экспортированного расписания рядом со строкой подписи</p>
+                            <input
+                                type="text"
+                                id="directorName"
+                                className="setting-input"
+                                placeholder="А.Ф. Мустафин"
+                                value={directorName}
+                                onChange={(event) => setDirectorName(event.target.value)}
+                            />
+                        </div>
                         <button className="btn btn-primary" id="saveSettingsBtn" onClick={saveSettings}>
                             Сохранить настройки
                         </button>
                         <span className={`upload-status ${settingsStatus.type}`} id="settingsStatus">
                             {settingsStatus.message}
                         </span>
+                    </div>
+
+                    <h3 className="subsection-title">Группы и направления</h3>
+                    <p className="section-desc">Курс определяется автоматически по номеру группы (23<strong>1</strong>01 — 1 курс). Направление появляется в шапке при экспорте расписания.</p>
+
+                    <div className="add-group-row">
+                        <select
+                            className="form-input"
+                            value={newGroupUniversityId}
+                            onChange={(event) => setNewGroupUniversityId(event.target.value)}
+                        >
+                            <option value="">Вуз</option>
+                            {universities.map((university) => (
+                                <option key={university.id} value={university.id}>{university.short_name}</option>
+                            ))}
+                        </select>
+                        <input
+                            type="text"
+                            className="form-input"
+                            placeholder="Номер группы, например 23101"
+                            value={newGroupName}
+                            onChange={(event) => setNewGroupName(event.target.value)}
+                        />
+                        <input
+                            type="text"
+                            className="form-input"
+                            placeholder="Направление (необязательно)"
+                            value={newGroupDirection}
+                            onChange={(event) => setNewGroupDirection(event.target.value)}
+                        />
+                        <button type="button" className="btn btn-primary" onClick={handleCreateGroup} disabled={isCreatingGroup}>
+                            {isCreatingGroup ? 'Добавление...' : 'Добавить группу'}
+                        </button>
+                    </div>
+
+                    <div className="lessons-table-wrapper">
+                        <table className="lessons-table">
+                            <thead>
+                                <tr>
+                                    <th>Университет</th>
+                                    <th>Группа</th>
+                                    <th>Курс</th>
+                                    <th>Направление</th>
+                                    <th></th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {groups.map((group) => {
+                                    const course = getCourseFromGroupName(group.name);
+                                    const draft = groupDirectionDrafts[group.id] ?? group.direction ?? '';
+
+                                    return (
+                                        <tr key={group.id}>
+                                            <td>{group.university}</td>
+                                            <td><strong>{group.name}</strong></td>
+                                            <td>{course ?? '—'}</td>
+                                            <td>
+                                                <input
+                                                    type="text"
+                                                    className="form-input"
+                                                    placeholder="09.03.01 Информатика и вычислительная техника"
+                                                    value={draft}
+                                                    onChange={(event) => setGroupDirectionDrafts((previous) => ({
+                                                        ...previous,
+                                                        [group.id]: event.target.value
+                                                    }))}
+                                                />
+                                            </td>
+                                            <td>
+                                                <button className="btn-edit" onClick={() => handleSaveGroupDirection(group.id)}>
+                                                    Сохранить
+                                                </button>
+                                            </td>
+                                        </tr>
+                                    );
+                                })}
+                            </tbody>
+                        </table>
+                        {groups.length === 0 && (
+                            <p className="empty-message">Групп пока нет</p>
+                        )}
                     </div>
                 </section>
 
@@ -810,13 +1345,25 @@ export default function AdminDashboardPage() {
                 </section>
             </main>
 
-            <div className="modal-overlay" id="editModal" style={{ display: isEditModalOpen ? '' : 'none' }} onClick={(event) => {
-                if (event.target.id === 'editModal') {
-                    setIsEditModalOpen(false);
-                }
-            }}>
+            <div
+                className={`modal-overlay ${isEditModalOpen ? 'active' : ''}`}
+                id="editModal"
+                aria-hidden={!isEditModalOpen}
+                onClick={(event) => {
+                    if (event.target.id === 'editModal') {
+                        setIsEditModalOpen(false);
+                    }
+                }}
+            >
                 <div className="modal-card">
-                    <h3 className="modal-title">Редактировать занятие</h3>
+                    <h3 className="modal-title">
+                        {editMode === 'create'
+                            ? (editContext === 'template' ? 'Добавить в шаблон' : 'Добавить занятие')
+                            : 'Редактировать занятие'}
+                    </h3>
+                    {editContext === 'template' && (
+                        <p className="modal-hint">Сохранится как новая версия с текущей недели — прошлые недели не изменятся.</p>
+                    )}
                     <form id="editForm" className="edit-form" onSubmit={handleEditSubmit}>
                         <input type="hidden" id="editId" value={editForm.id} readOnly />
                         <div className="form-row">
@@ -879,6 +1426,17 @@ export default function AdminDashboardPage() {
                                 onChange={(event) => setEditForm((previous) => ({ ...previous, room: event.target.value }))}
                             />
                         </div>
+                        <div className="form-row">
+                            <label>Преподаватель</label>
+                            <input
+                                type="text"
+                                id="editTeacher"
+                                className="form-input"
+                                placeholder="Например: Герасимов Н.П."
+                                value={editForm.teacher}
+                                onChange={(event) => setEditForm((previous) => ({ ...previous, teacher: event.target.value }))}
+                            />
+                        </div>
                         <div className="form-row-pair">
                             <div className="form-row">
                                 <label>Тип</label>
@@ -907,44 +1465,26 @@ export default function AdminDashboardPage() {
                                 </select>
                             </div>
                         </div>
-                        <div className="form-row-pair">
-                            <div className="form-row">
-                                <label>Тип недели</label>
-                                <select
-                                    id="editWeekType"
-                                    className="form-input"
-                                    value={editForm.week_type}
-                                    onChange={(event) => setEditForm((previous) => ({ ...previous, week_type: event.target.value }))}
-                                >
-                                    <option value="0">Каждую</option>
-                                    <option value="1">Нечётная</option>
-                                    <option value="2">Чётная</option>
-                                </select>
-                            </div>
-                            <div className="form-row">
-                                <label>Исключение (Неделя №)</label>
-                                <input
-                                    type="number"
-                                    id="editSpecificWeek"
-                                    className="form-input"
-                                    placeholder="Пусто = шаблон"
-                                    min="1"
-                                    value={editForm.specific_week}
-                                    onChange={(event) => setEditForm((previous) => ({ ...previous, specific_week: event.target.value }))}
-                                />
-                            </div>
-                        </div>
                         <div className="modal-actions">
+                            {editMode === 'edit' && (
+                                <button type="button" className="btn btn-delete" onClick={handleDeleteFromModal}>
+                                    {editContext === 'template' ? 'Убрать из шаблона' : 'Удалить'}
+                                </button>
+                            )}
                             <button type="button" className="btn btn-secondary" id="cancelEditBtn" onClick={() => setIsEditModalOpen(false)}>
                                 Отмена
                             </button>
-                            <button type="submit" className="btn btn-primary">Сохранить</button>
+                            <button type="submit" className="btn btn-primary">
+                                {editMode === 'create'
+                                    ? 'Добавить'
+                                    : (editContext === 'template' ? 'Сохранить как новую версию' : 'Сохранить')}
+                            </button>
                         </div>
                     </form>
                 </div>
             </div>
 
-            {toastMessage && <div className="toast">{toastMessage}</div>}
+            <div className={`toast ${isToastVisible ? 'active' : ''}`} aria-hidden={!isToastVisible}>{toastMessage}</div>
         </div>
     );
 }
@@ -973,6 +1513,11 @@ function formatAuditAction(action) {
     const labels = {
         'login.success': 'Успешный вход',
         'schedule.upload': 'Загрузка расписания',
+        'schedule.materialize_week': 'Первая правка недели (скопирован шаблон)',
+        'schedule.clear_week': 'Очистка недели (возврат к шаблону)',
+        'group.create': 'Добавление группы',
+        'group.update': 'Изменение направления группы',
+        'lesson.create': 'Добавление занятия',
         'lesson.update': 'Редактирование занятия',
         'lesson.delete': 'Удаление занятия',
         'settings.update': 'Изменение настройки',

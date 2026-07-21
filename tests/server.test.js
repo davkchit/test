@@ -13,6 +13,7 @@ const { ADMIN_COOKIE_NAME } = require('../server/config');
 const { createToken } = require('../server/middleware/auth');
 const { closeDb, getDb } = require('../server/db');
 const { getWeekMeta } = require('../server/utils/date');
+const { resolveTemplateLessons } = require('../server/utils/templateResolve');
 
 test.afterEach(async () => {
     closeDb();
@@ -353,6 +354,187 @@ test('audit log CSV export returns text/csv with audit entries', async () => {
     assert.match(response.headers.get('content-type'), /text\/csv/);
     assert.match(body, /settings\.update/);
     assert.match(body, /semester_start_date/);
+
+    await context.close();
+});
+
+// Mirrors the per-day visibility decision in buildScheduleDays (src/pages/SchedulePage.jsx):
+// on an exception week, only that week's own specific_week rows are shown (no merge
+// with the template); otherwise the shared resolveTemplateLessons algorithm picks the
+// active template version. Duplicated here (not imported) because that file is JSX
+// wired to react-router-dom and isn't loadable in a plain Node test.
+function resolveVisibleLessons(lessonsForDay, weekNumber, weekType, exceptionWeeks) {
+    if (exceptionWeeks.has(weekNumber)) {
+        return lessonsForDay.filter((lesson) => lesson.specific_week === weekNumber);
+    }
+
+    const templateCandidates = lessonsForDay.filter(
+        (lesson) => lesson.specific_week == null && (lesson.week_type === 0 || lesson.week_type === weekType)
+    );
+
+    return resolveTemplateLessons(templateCandidates, weekNumber);
+}
+
+test('editing the template mid-semester does not rewrite history for past weeks', async () => {
+    const context = await createTestContext();
+    const db = getDb();
+
+    // Simulate an admin edit that takes effect from week 5 onward, on the same
+    // slot as the seeded week-1 template lesson (Monday, odd weeks).
+    db.prepare(`
+        INSERT INTO lessons (
+            group_id, subgroup, day_of_week, week_type, specific_week,
+            template_from_week, is_removed,
+            time_start, time_end, subject, room, lesson_type, teacher, sort_order
+        )
+        VALUES (?, 0, 1, 1, NULL, 5, 0, '09:40', '11:10', 'Дискретная математика', '305 каб.', 'Лекция', 'Иванов И.И.', 1)
+    `).run(context.primaryGroupId);
+
+    const pastResponse = await fetch(`${context.baseUrl}/api/schedule/${context.primaryGroupId}?date=2026-02-23&days=1`);
+    const pastBody = await pastResponse.json();
+    assert.equal(pastBody.week_number, 3);
+
+    const pastLessons = resolveVisibleLessons(pastBody.by_day[1] || [], 3, 1, new Set(pastBody.exception_weeks));
+    assert.deepEqual(pastLessons.map((l) => l.subject), ['Высшая математика']);
+
+    const futureResponse = await fetch(`${context.baseUrl}/api/schedule/${context.primaryGroupId}?date=2026-03-09&days=1`);
+    const futureBody = await futureResponse.json();
+    assert.equal(futureBody.week_number, 5);
+
+    const futureLessons = resolveVisibleLessons(futureBody.by_day[1] || [], 5, 1, new Set(futureBody.exception_weeks));
+    assert.deepEqual(futureLessons.map((l) => l.subject), ['Дискретная математика']);
+
+    await context.close();
+});
+
+test('materialize-week clones the rest of the template, not just the touched slot', async () => {
+    const context = await createTestContext();
+    const db = getDb();
+
+    // Second template lesson, untouched by the upcoming edit, that must survive cloning.
+    db.prepare(`
+        INSERT INTO lessons (
+            group_id, subgroup, day_of_week, week_type, specific_week,
+            time_start, time_end, subject, room, lesson_type, teacher, sort_order
+        )
+        VALUES (?, 0, 2, 0, NULL, '11:30', '13:00', 'Физика', '210 каб.', 'Практика', 'Петров П.П.', 1)
+    `).run(context.primaryGroupId);
+
+    const response = await fetch(`${context.baseUrl}/api/admin/schedule/materialize-week`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            group_id: context.primaryGroupId,
+            week_number: 3,
+            action: 'upsert',
+            day_of_week: 3,
+            time_start: '14:20',
+            time_end: '15:50',
+            subgroup: 0,
+            subject: 'Новый предмет',
+            room: '101 каб.',
+            lesson_type: 'Семинар',
+            teacher: 'Сидоров С.С.'
+        })
+    });
+    const body = await response.json();
+
+    assert.equal(response.status, 201);
+    assert.equal(body.count, 3);
+
+    const lessonsResponse = await fetch(`${context.baseUrl}/api/admin/lessons?group_id=${context.primaryGroupId}`, {
+        headers: context.authHeaders
+    });
+    const allLessons = await lessonsResponse.json();
+    const weekLessons = allLessons.filter((lesson) => lesson.specific_week === 3);
+
+    assert.equal(weekLessons.length, 3);
+    assert.deepEqual(
+        weekLessons.map((lesson) => lesson.subject).sort(),
+        ['Высшая математика', 'Новый предмет', 'Физика']
+    );
+
+    await context.close();
+});
+
+test('a materialized week fully suppresses the template for that week (no merge)', async () => {
+    const context = await createTestContext();
+
+    const materializeResponse = await fetch(`${context.baseUrl}/api/admin/schedule/materialize-week`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            group_id: context.primaryGroupId,
+            week_number: 3,
+            action: 'upsert',
+            day_of_week: 3,
+            time_start: '14:20',
+            time_end: '15:50',
+            subgroup: 0,
+            subject: 'Новый предмет',
+            room: '101 каб.',
+            lesson_type: 'Семинар',
+            teacher: 'Сидоров С.С.'
+        })
+    });
+    assert.equal(materializeResponse.status, 201);
+
+    const response = await fetch(`${context.baseUrl}/api/schedule/${context.primaryGroupId}?date=2026-02-23&days=7`);
+    const body = await response.json();
+
+    assert.deepEqual(body.exception_weeks, [3]);
+
+    // The server still returns the raw template row for Monday alongside the
+    // cloned specific_week=3 row — the "no merge" guarantee is enforced by the
+    // client's visibility filter, not by the API pre-filtering it away.
+    const mondayRaw = body.by_day[1] || [];
+    assert.ok(mondayRaw.some((lesson) => lesson.specific_week === null && lesson.subject === 'Высшая математика'));
+    assert.ok(mondayRaw.some((lesson) => lesson.specific_week === 3 && lesson.subject === 'Высшая математика'));
+
+    const mondayVisible = resolveVisibleLessons(mondayRaw, 3, 1, new Set(body.exception_weeks));
+    assert.equal(mondayVisible.length, 1);
+    assert.equal(mondayVisible[0].specific_week, 3);
+
+    await context.close();
+});
+
+test('deleting a materialized week reverts the group back to the template', async () => {
+    const context = await createTestContext();
+
+    await fetch(`${context.baseUrl}/api/admin/schedule/materialize-week`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            group_id: context.primaryGroupId,
+            week_number: 3,
+            action: 'upsert',
+            day_of_week: 3,
+            time_start: '14:20',
+            time_end: '15:50',
+            subgroup: 0,
+            subject: 'Новый предмет',
+            room: null,
+            lesson_type: null,
+            teacher: null
+        })
+    });
+
+    const deleteResponse = await fetch(
+        `${context.baseUrl}/api/admin/schedule/week?group_id=${context.primaryGroupId}&week_number=3`,
+        { method: 'DELETE', headers: context.authHeaders }
+    );
+    const deleteBody = await deleteResponse.json();
+
+    assert.equal(deleteResponse.status, 200);
+    assert.equal(deleteBody.deleted, 2);
+
+    const response = await fetch(`${context.baseUrl}/api/schedule/${context.primaryGroupId}?date=2026-02-23&days=1`);
+    const body = await response.json();
+
+    assert.deepEqual(body.exception_weeks, []);
+
+    const mondayVisible = resolveVisibleLessons(body.by_day[1] || [], 3, 1, new Set(body.exception_weeks));
+    assert.deepEqual(mondayVisible.map((lesson) => lesson.subject), ['Высшая математика']);
 
     await context.close();
 });

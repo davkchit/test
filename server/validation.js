@@ -246,16 +246,96 @@ function validateLessonUpdateBody(body) {
     return payload;
 }
 
+function validateMaterializeWeekBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    if (!['upsert', 'remove'].includes(body.action)) {
+        throw createValidationError('Поле action должно быть upsert или remove');
+    }
+
+    const timeStart = readRequiredString(body.time_start, 'Время начала', 5);
+    const timeEnd = readRequiredString(body.time_end, 'Время окончания', 5);
+
+    if (!isValidTime(timeStart) || !isValidTime(timeEnd)) {
+        throw createValidationError('Некорректное время');
+    }
+
+    const result = {
+        group_id: readInteger(body.group_id, 'group_id', { min: 1 }),
+        week_number: readInteger(body.week_number, 'week_number', { min: 1 }),
+        action: body.action,
+        day_of_week: readInteger(body.day_of_week, 'День недели', { min: 1, max: 7 }),
+        time_start: timeStart,
+        time_end: timeEnd,
+        subgroup: body.subgroup === undefined ? 0 : readInteger(body.subgroup, 'Подгруппа', { min: 0, max: 2 })
+    };
+
+    if (body.action === 'upsert') {
+        result.subject = readRequiredString(body.subject, 'Предмет');
+        result.room = readOptionalString(body.room, 'Кабинет');
+        result.lesson_type = readOptionalString(body.lesson_type, 'Тип занятия');
+        result.teacher = readOptionalString(body.teacher, 'Преподаватель');
+    }
+
+    return result;
+}
+
+function validateLessonCreateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    const timeStart = readRequiredString(body.time_start, 'Время начала', 5);
+    const timeEnd = readRequiredString(body.time_end, 'Время окончания', 5);
+
+    if (!isValidTime(timeStart)) {
+        throw createValidationError('Некорректное время начала');
+    }
+
+    if (!isValidTime(timeEnd)) {
+        throw createValidationError('Некорректное время окончания');
+    }
+
+    if (timeStart >= timeEnd) {
+        throw createValidationError('Время окончания должно быть позже времени начала');
+    }
+
+    let specificWeek = null;
+
+    if (body.specific_week !== undefined && body.specific_week !== null && body.specific_week !== '') {
+        specificWeek = readInteger(body.specific_week, 'Номер конкретной недели', { min: 1 });
+    }
+
+    return {
+        group_id: readInteger(body.group_id, 'group_id', { min: 1 }),
+        subgroup: body.subgroup === undefined ? 0 : readInteger(body.subgroup, 'Подгруппа', { min: 0, max: 2 }),
+        day_of_week: readInteger(body.day_of_week, 'День недели', { min: 1, max: 7 }),
+        week_type: body.week_type === undefined ? 0 : readInteger(body.week_type, 'Тип недели', { min: 0, max: 2 }),
+        specific_week: specificWeek,
+        template_from_week: body.template_from_week === undefined ? 1 : readInteger(body.template_from_week, 'Неделя вступления в силу', { min: 1 }),
+        is_removed: Boolean(body.is_removed),
+        time_start: timeStart,
+        time_end: timeEnd,
+        subject: readRequiredString(body.subject, 'Предмет'),
+        room: readOptionalString(body.room, 'Кабинет'),
+        lesson_type: readOptionalString(body.lesson_type, 'Тип занятия'),
+        teacher: readOptionalString(body.teacher, 'Преподаватель'),
+        sort_order: body.sort_order === undefined ? 0 : readInteger(body.sort_order, 'Порядок сортировки', { min: 0 })
+    };
+}
+
 function validateSettingsBody(body) {
     assertPlainObject(body, 'Тело запроса должно быть объектом');
 
-    const allowedKeys = ['semester_start_date'];
+    const allowedKeys = ['semester_start_date', 'director_name', 'director_title', 'academic_year', 'study_form', 'term_parity'];
     const bodyKeys = Object.keys(body);
 
     for (const key of bodyKeys) {
         if (!allowedKeys.includes(key)) {
             throw createValidationError(`Неизвестная настройка: ${key}`);
         }
+    }
+
+    if (body.term_parity !== undefined && !['fall', 'spring'].includes(body.term_parity)) {
+        throw createValidationError('term_parity должен быть fall или spring');
     }
 
     const semesterStartDate = readRequiredString(body.semester_start_date, 'Дата начала семестра', 10);
@@ -265,15 +345,42 @@ function validateSettingsBody(body) {
     }
 
     return {
-        semester_start_date: semesterStartDate
+        semester_start_date: semesterStartDate,
+        director_name: readOptionalString(body.director_name, 'ФИО директора', 200),
+        director_title: readOptionalString(body.director_title, 'Должность', 200),
+        academic_year: readOptionalString(body.academic_year, 'Учебный год', 20),
+        study_form: readOptionalString(body.study_form, 'Форма обучения', 100),
+        term_parity: body.term_parity === undefined ? null : body.term_parity
+    };
+}
+
+function validateGroupUpdateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    return {
+        direction: readOptionalString(body.direction, 'Направление', 300)
+    };
+}
+
+function validateGroupCreateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    return {
+        university_id: readInteger(body.university_id, 'university_id', { min: 1 }),
+        name: readRequiredString(body.name, 'Название группы', 50),
+        direction: readOptionalString(body.direction, 'Направление', 300)
     };
 }
 
 module.exports = {
     createValidationError,
     validateBulkScheduleUploadBody,
+    validateGroupCreateBody,
+    validateGroupUpdateBody,
+    validateLessonCreateBody,
     validateLessonUpdateBody,
     validateLoginBody,
+    validateMaterializeWeekBody,
     validateScheduleUploadBody,
     validateSettingsBody
 };

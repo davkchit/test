@@ -83,6 +83,7 @@ function initTables() {
             id            INTEGER PRIMARY KEY AUTOINCREMENT,
             university_id INTEGER NOT NULL REFERENCES universities(id) ON DELETE CASCADE,
             name          TEXT NOT NULL,
+            direction     TEXT DEFAULT NULL,
             UNIQUE(university_id, name)
         );
 
@@ -93,6 +94,8 @@ function initTables() {
             day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 1 AND 7),
             week_type   INTEGER NOT NULL DEFAULT 0 CHECK(week_type IN (0, 1, 2)),
             specific_week INTEGER DEFAULT NULL,
+            template_from_week INTEGER NOT NULL DEFAULT 1,
+            is_removed  INTEGER NOT NULL DEFAULT 0,
             time_start  TEXT    NOT NULL,
             time_end    TEXT    NOT NULL,
             subject     TEXT    NOT NULL,
@@ -114,6 +117,24 @@ function initTables() {
 
     try {
         db.exec('ALTER TABLE lessons ADD COLUMN specific_week INTEGER DEFAULT NULL');
+    } catch (err) {
+        // Ignored if column already exists
+    }
+
+    try {
+        db.exec('ALTER TABLE lessons ADD COLUMN template_from_week INTEGER NOT NULL DEFAULT 1');
+    } catch (err) {
+        // Ignored if column already exists
+    }
+
+    try {
+        db.exec('ALTER TABLE lessons ADD COLUMN is_removed INTEGER NOT NULL DEFAULT 0');
+    } catch (err) {
+        // Ignored if column already exists
+    }
+
+    try {
+        db.exec('ALTER TABLE groups_ ADD COLUMN direction TEXT DEFAULT NULL');
     } catch (err) {
         // Ignored if column already exists
     }
@@ -182,6 +203,8 @@ function migrateLessonsDayOfWeekConstraint() {
             day_of_week INTEGER NOT NULL CHECK(day_of_week BETWEEN 1 AND 7),
             week_type   INTEGER NOT NULL DEFAULT 0 CHECK(week_type IN (0, 1, 2)),
             specific_week INTEGER DEFAULT NULL,
+            template_from_week INTEGER NOT NULL DEFAULT 1,
+            is_removed  INTEGER NOT NULL DEFAULT 0,
             time_start  TEXT    NOT NULL,
             time_end    TEXT    NOT NULL,
             subject     TEXT    NOT NULL,
@@ -195,11 +218,13 @@ function migrateLessonsDayOfWeekConstraint() {
 
         INSERT INTO lessons (
             id, group_id, subgroup, day_of_week, week_type, specific_week,
+            template_from_week, is_removed,
             time_start, time_end, subject, room, lesson_type, teacher,
             sort_order, created_at, updated_at
         )
         SELECT
             id, group_id, subgroup, day_of_week, week_type, specific_week,
+            template_from_week, is_removed,
             time_start, time_end, subject, room, lesson_type, teacher,
             sort_order, created_at, updated_at
         FROM lessons_legacy;

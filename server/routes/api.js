@@ -80,6 +80,7 @@ router.get('/schedule/:groupId', (req, res) => {
 
     let sql = `
         SELECT id, subgroup, day_of_week, week_type, specific_week,
+               template_from_week, is_removed,
                time_start, time_end, subject, room, lesson_type, teacher, sort_order
         FROM lessons
         WHERE group_id = ?

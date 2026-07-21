@@ -7,6 +7,7 @@ const {
     listDatabaseBackups
 } = require('../backups');
 const { getDb } = require('../db');
+const { buildScheduleWorkbook } = require('../exportSchedule');
 const {
     clearAdminAuthCookie,
     createToken,
@@ -19,11 +20,17 @@ const {
     getRateLimitInfo,
     registerFailedLogin
 } = require('../login-rate-limit');
-const { formatLocalDate, getWeekMeta } = require('../utils/date');
+const { addDaysToIsoDate, formatLocalDate, getWeekMeta, isValidIsoDate } = require('../utils/date');
+const { getCourseFromGroupName, getSemesterLabel } = require('../utils/course');
+const { resolveTemplateLessons } = require('../utils/templateResolve');
 const {
     validateBulkScheduleUploadBody,
+    validateGroupCreateBody,
+    validateGroupUpdateBody,
+    validateLessonCreateBody,
     validateLessonUpdateBody,
     validateLoginBody,
+    validateMaterializeWeekBody,
     validateScheduleUploadBody,
     validateSettingsBody
 } = require('../validation');
@@ -97,13 +104,101 @@ router.use(requireCsrf);
 router.get('/groups', (req, res) => {
     const db = getDb();
     const rows = db.prepare(`
-        SELECT g.id, g.name, u.short_name as university
+        SELECT g.id, g.name, g.direction, u.short_name as university
         FROM groups_ g
         JOIN universities u ON u.id = g.university_id
         ORDER BY u.short_name, g.name
     `).all();
 
     res.json(rows);
+});
+
+router.post('/groups', (req, res) => {
+    let payload;
+
+    try {
+        payload = validateGroupCreateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+    const university = db.prepare('SELECT id FROM universities WHERE id = ?').get(payload.university_id);
+
+    if (!university) {
+        return res.status(404).json({ error: 'Университет не найден' });
+    }
+
+    const existing = db.prepare('SELECT id FROM groups_ WHERE university_id = ? AND name = ?')
+        .get(payload.university_id, payload.name);
+
+    if (existing) {
+        return res.status(409).json({ error: `Группа «${payload.name}» уже существует в этом вузе` });
+    }
+
+    const result = db.prepare('INSERT INTO groups_ (university_id, name, direction) VALUES (?, ?, ?)')
+        .run(payload.university_id, payload.name, payload.direction);
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'group.create',
+        entityType: 'group',
+        entityId: result.lastInsertRowid,
+        ipAddress: getClientAddress(req),
+        details: { name: payload.name, university_id: payload.university_id }
+    });
+
+    const created = db.prepare(`
+        SELECT g.id, g.name, g.direction, u.short_name as university
+        FROM groups_ g
+        JOIN universities u ON u.id = g.university_id
+        WHERE g.id = ?
+    `).get(result.lastInsertRowid);
+
+    res.status(201).json(created);
+});
+
+router.put('/groups/:id', (req, res) => {
+    const db = getDb();
+    const groupId = Number(req.params.id);
+
+    if (!Number.isInteger(groupId) || groupId <= 0) {
+        return res.status(400).json({ error: 'Некорректный ID группы' });
+    }
+
+    const group = db.prepare('SELECT id FROM groups_ WHERE id = ?').get(groupId);
+
+    if (!group) {
+        return res.status(404).json({ error: 'Группа не найдена' });
+    }
+
+    let payload;
+
+    try {
+        payload = validateGroupUpdateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    db.prepare('UPDATE groups_ SET direction = ? WHERE id = ?').run(payload.direction, groupId);
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'group.update',
+        entityType: 'group',
+        entityId: groupId,
+        ipAddress: getClientAddress(req),
+        details: { direction: payload.direction }
+    });
+
+    const updated = db.prepare(`
+        SELECT g.id, g.name, g.direction, u.short_name as university
+        FROM groups_ g
+        JOIN universities u ON u.id = g.university_id
+        WHERE g.id = ?
+    `).get(groupId);
+
+    res.json(updated);
 });
 
 router.post('/schedule/upload', (req, res) => {
@@ -365,6 +460,273 @@ router.post('/schedule/upload-bulk', (req, res) => {
     }
 });
 
+router.get('/schedule/export', async (req, res) => {
+    const db = getDb();
+    const weekStart = typeof req.query.week_start === 'string' ? req.query.week_start : '';
+
+    if (!isValidIsoDate(weekStart)) {
+        return res.status(400).json({ error: 'Укажите week_start в формате YYYY-MM-DD' });
+    }
+
+    const semesterStartRow = db.prepare("SELECT value FROM settings WHERE key = 'semester_start_date'").get();
+
+    if (!semesterStartRow) {
+        return res.status(400).json({ error: 'Сначала задайте дату начала семестра в разделе «Настройки»' });
+    }
+
+    const weekMeta = getWeekMeta(semesterStartRow.value, weekStart);
+    const groups = db.prepare('SELECT id, name, direction FROM groups_ ORDER BY name').all();
+
+    const courseMap = new Map();
+
+    for (const group of groups) {
+        const course = getCourseFromGroupName(group.name);
+
+        if (course === null) {
+            continue;
+        }
+
+        const allLessons = db.prepare(`
+            SELECT id, subgroup, day_of_week, week_type, specific_week, template_from_week, is_removed,
+                   time_start, time_end, subject, room, lesson_type, teacher
+            FROM lessons
+            WHERE group_id = ?
+        `).all(group.id);
+
+        const hasExceptionWeek = allLessons.some((lesson) => lesson.specific_week === weekMeta.weekNumber);
+        let lessonsForWeek;
+
+        if (hasExceptionWeek) {
+            lessonsForWeek = allLessons.filter((lesson) => lesson.specific_week === weekMeta.weekNumber);
+        } else {
+            const candidates = allLessons.filter((lesson) =>
+                lesson.specific_week === null &&
+                (lesson.week_type === 0 || lesson.week_type === weekMeta.weekTypeNumber)
+            );
+            lessonsForWeek = resolveTemplateLessons(candidates, weekMeta.weekNumber);
+        }
+
+        if (!courseMap.has(course)) {
+            courseMap.set(course, []);
+        }
+
+        courseMap.get(course).push({
+            name: group.name,
+            direction: group.direction,
+            lessons: lessonsForWeek
+        });
+    }
+
+    if (courseMap.size === 0) {
+        return res.status(404).json({ error: 'Нет ни одной группы с корректным номером (23XYZ) для формирования расписания' });
+    }
+
+    const dayDates = {};
+
+    for (let offset = 0; offset < 6; offset += 1) {
+        const isoDate = addDaysToIsoDate(weekStart, offset);
+        const [year, month, day] = isoDate.split('-');
+        dayDates[offset + 1] = `${day}.${month}.${year}`;
+    }
+
+    const settingsRows = db.prepare('SELECT key, value FROM settings').all();
+    const settings = {};
+
+    for (const row of settingsRows) {
+        settings[row.key] = row.value;
+    }
+
+    const termParity = settings.term_parity === 'fall' ? 'fall' : 'spring';
+    const courseSheets = Array.from(courseMap.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([course, courseGroups]) => ({ course, groups: courseGroups }));
+
+    try {
+        const workbook = buildScheduleWorkbook({
+            courseSheets,
+            dayDates,
+            weekTypeLabel: weekMeta.weekTypeLabel.toUpperCase(),
+            semesterLabelForCourse: (course) => getSemesterLabel(course, termParity),
+            studyForm: settings.study_form || 'очная форма обучения',
+            academicYear: settings.academic_year || '',
+            directorName: settings.director_name || 'ФИО директора',
+            directorTitle: settings.director_title || 'Директор филиала'
+        });
+
+        const fileName = `raspisanie_${weekStart}.xlsx`;
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+        await workbook.xlsx.write(res);
+        res.end();
+    } catch (error) {
+        console.error('Schedule export error:', error);
+        res.status(500).json({ error: 'Не удалось сформировать файл расписания' });
+    }
+});
+
+router.post('/schedule/materialize-week', (req, res) => {
+    let payload;
+
+    try {
+        payload = validateMaterializeWeekBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+    const group = db.prepare('SELECT id FROM groups_ WHERE id = ?').get(payload.group_id);
+
+    if (!group) {
+        return res.status(404).json({ error: 'Группа не найдена' });
+    }
+
+    // This endpoint only makes sense the first time a week is touched — once it has
+    // its own rows, edits should go through the normal single-lesson endpoints.
+    const alreadyMaterialized = db.prepare(
+        'SELECT 1 FROM lessons WHERE group_id = ? AND specific_week = ? LIMIT 1'
+    ).get(payload.group_id, payload.week_number);
+
+    if (alreadyMaterialized) {
+        return res.status(409).json({ error: 'Эта неделя уже содержит собственные записи' });
+    }
+
+    const weekTypeNumber = payload.week_number % 2 === 0 ? 2 : 1;
+    const templateRows = db.prepare(`
+        SELECT id, subgroup, day_of_week, week_type, template_from_week, is_removed,
+               time_start, time_end, subject, room, lesson_type, teacher
+        FROM lessons
+        WHERE group_id = ? AND specific_week IS NULL AND (week_type = 0 OR week_type = ?)
+    `).all(payload.group_id, weekTypeNumber);
+
+    const resolved = resolveTemplateLessons(templateRows, payload.week_number);
+    const slotKey = (lesson) => `${lesson.day_of_week}|${lesson.time_start}|${lesson.time_end}|${lesson.subgroup}`;
+    const touchedKey = `${payload.day_of_week}|${payload.time_start}|${payload.time_end}|${payload.subgroup}`;
+
+    const finalLessons = [];
+    let touchedHandled = false;
+
+    for (const lesson of resolved) {
+        if (slotKey(lesson) === touchedKey) {
+            touchedHandled = true;
+
+            if (payload.action === 'upsert') {
+                finalLessons.push({
+                    day_of_week: payload.day_of_week,
+                    time_start: payload.time_start,
+                    time_end: payload.time_end,
+                    subgroup: payload.subgroup,
+                    subject: payload.subject,
+                    room: payload.room,
+                    lesson_type: payload.lesson_type,
+                    teacher: payload.teacher
+                });
+            }
+            // action === 'remove' — simply not carried into finalLessons
+        } else {
+            finalLessons.push({
+                day_of_week: lesson.day_of_week,
+                time_start: lesson.time_start,
+                time_end: lesson.time_end,
+                subgroup: lesson.subgroup,
+                subject: lesson.subject,
+                room: lesson.room,
+                lesson_type: lesson.lesson_type,
+                teacher: lesson.teacher
+            });
+        }
+    }
+
+    if (!touchedHandled && payload.action === 'upsert') {
+        finalLessons.push({
+            day_of_week: payload.day_of_week,
+            time_start: payload.time_start,
+            time_end: payload.time_end,
+            subgroup: payload.subgroup,
+            subject: payload.subject,
+            room: payload.room,
+            lesson_type: payload.lesson_type,
+            teacher: payload.teacher
+        });
+    }
+
+    const transaction = db.transaction(() => {
+        const insert = db.prepare(`
+            INSERT INTO lessons (
+                group_id, subgroup, day_of_week, week_type, specific_week,
+                template_from_week, is_removed,
+                time_start, time_end, subject, room, lesson_type, teacher, sort_order
+            )
+            VALUES (?, ?, ?, 0, ?, 1, 0, ?, ?, ?, ?, ?, ?, ?)
+        `);
+
+        let count = 0;
+
+        for (const lesson of finalLessons) {
+            insert.run(
+                payload.group_id,
+                lesson.subgroup,
+                lesson.day_of_week,
+                payload.week_number,
+                lesson.time_start,
+                lesson.time_end,
+                lesson.subject,
+                lesson.room,
+                lesson.lesson_type,
+                lesson.teacher,
+                count
+            );
+            count += 1;
+        }
+
+        return count;
+    });
+
+    try {
+        const count = transaction();
+
+        writeAuditLog(db, {
+            adminId: req.admin.id,
+            action: 'schedule.materialize_week',
+            entityType: 'group_schedule',
+            entityId: payload.group_id,
+            ipAddress: getClientAddress(req),
+            details: { group_id: payload.group_id, week_number: payload.week_number, lesson_count: count }
+        });
+
+        res.status(201).json({ success: true, count });
+    } catch (error) {
+        console.error('Materialize week error:', error);
+        res.status(500).json({ error: 'Не удалось сохранить неделю' });
+    }
+});
+
+router.delete('/schedule/week', (req, res) => {
+    const db = getDb();
+    const groupId = Number.parseInt(req.query.group_id, 10);
+    const weekNumber = Number.parseInt(req.query.week_number, 10);
+
+    if (!Number.isInteger(groupId) || groupId <= 0) {
+        return res.status(400).json({ error: 'Укажите корректный group_id' });
+    }
+
+    if (!Number.isInteger(weekNumber) || weekNumber <= 0) {
+        return res.status(400).json({ error: 'Укажите корректный week_number' });
+    }
+
+    const result = db.prepare('DELETE FROM lessons WHERE group_id = ? AND specific_week = ?').run(groupId, weekNumber);
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'schedule.clear_week',
+        entityType: 'group_schedule',
+        entityId: groupId,
+        ipAddress: getClientAddress(req),
+        details: { group_id: groupId, week_number: weekNumber, deleted: result.changes }
+    });
+
+    res.json({ success: true, deleted: result.changes });
+});
+
 router.get('/lessons', (req, res) => {
     const db = getDb();
     const groupId = Number.parseInt(req.query.group_id, 10);
@@ -386,6 +748,67 @@ router.get('/lessons', (req, res) => {
     `).all(groupId);
 
     res.json(rows);
+});
+
+router.post('/lessons', (req, res) => {
+    let payload;
+
+    try {
+        payload = validateLessonCreateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+    const group = db.prepare('SELECT id FROM groups_ WHERE id = ?').get(payload.group_id);
+
+    if (!group) {
+        return res.status(404).json({ error: 'Группа не найдена' });
+    }
+
+    const result = db.prepare(`
+        INSERT INTO lessons (
+            group_id, subgroup, day_of_week, week_type, specific_week,
+            template_from_week, is_removed,
+            time_start, time_end, subject, room, lesson_type, teacher, sort_order
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        payload.group_id,
+        payload.subgroup,
+        payload.day_of_week,
+        payload.week_type,
+        payload.specific_week,
+        payload.template_from_week,
+        payload.is_removed ? 1 : 0,
+        payload.time_start,
+        payload.time_end,
+        payload.subject,
+        payload.room,
+        payload.lesson_type,
+        payload.teacher,
+        payload.sort_order
+    );
+
+    const created = db.prepare('SELECT * FROM lessons WHERE id = ?').get(result.lastInsertRowid);
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'lesson.create',
+        entityType: 'lesson',
+        entityId: created.id,
+        ipAddress: getClientAddress(req),
+        details: {
+            group_id: payload.group_id,
+            subject: created.subject,
+            day_of_week: created.day_of_week,
+            time_start: created.time_start,
+            time_end: created.time_end,
+            specific_week: created.specific_week
+        }
+    });
+
+    res.status(201).json(created);
 });
 
 router.put('/lessons/:id', (req, res) => {
@@ -549,16 +972,23 @@ router.put('/settings', (req, res) => {
         ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `);
 
+    const updatedKeys = { semester_start_date: settingsPayload.semester_start_date };
     upsert.run('semester_start_date', settingsPayload.semester_start_date);
+
+    for (const key of ['director_name', 'director_title', 'academic_year', 'study_form', 'term_parity']) {
+        if (settingsPayload[key] !== null && settingsPayload[key] !== undefined) {
+            upsert.run(key, settingsPayload[key]);
+            updatedKeys[key] = settingsPayload[key];
+        }
+    }
+
     writeAuditLog(db, {
         adminId: req.admin.id,
         action: 'settings.update',
         entityType: 'settings',
         entityId: 'semester_start_date',
         ipAddress: getClientAddress(req),
-        details: {
-            semester_start_date: settingsPayload.semester_start_date
-        }
+        details: updatedKeys
     });
     res.json({ success: true });
 });

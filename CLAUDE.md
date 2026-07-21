@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-ANTI_VUZ is a full-stack university schedule management web app. Students browse schedules; admins manage them through a protected dashboard. Deployed on Railway.
+КАИ Расписание is a full-stack university schedule management web app. Students browse schedules; admins manage them through a protected dashboard. Deployed on Railway.
 
 **Stack:** React 19 + Vite (frontend), Express 5 (backend), SQLite via better-sqlite3.
 

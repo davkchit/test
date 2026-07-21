@@ -123,13 +123,14 @@ body {
     padding: 60px 50px;
     box-shadow: var(--shadow);
     text-align: center;
-    transition: all 0.3s ease;
+    transition: background-color 0.35s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                box-shadow 0.35s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 /* Иконка */
 .icon {
     margin-bottom: 32px;
-    animation: slideDown 0.6s ease;
+    animation: slideDown 0.6s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 .icon img {
@@ -147,9 +148,10 @@ body {
     font-weight: 600;
     color: var(--text-primary);
     margin-bottom: 16px;
-    letter-spacing: -0.5px;
-    line-height: 1.2;
-    animation: slideDown 0.6s ease 0.1s both;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+    animation: slideDown 0.6s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)) 0.1s both;
+    transition: color 0.3s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 /* Подзаголовок */
@@ -158,8 +160,10 @@ body {
     color: var(--text-secondary);
     margin-bottom: 40px;
     font-weight: 400;
-    animation: slideDown 0.6s ease 0.2s both;
-    transition: opacity 0.3s ease, transform 0.3s ease;
+    animation: slideDown 0.6s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)) 0.2s both;
+    transition: opacity 0.3s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                transform 0.3s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                color 0.3s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
     min-height: 24px;
 }
 
@@ -169,7 +173,7 @@ body {
 }
 
 .subtitle.fade-in {
-    animation: fadeIn 0.4s ease forwards;
+    animation: fadeIn 0.4s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)) forwards;
 }
 
 @keyframes fadeIn {
@@ -200,7 +204,7 @@ body {
 .search-container {
     position: relative;
     margin-bottom: 24px;
-    animation: slideDown 0.6s ease 0.3s both;
+    animation: slideDown 0.6s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)) 0.3s both;
 }
 
 .search-input {
@@ -211,7 +215,10 @@ body {
     font-size: 16px;
     color: var(--text-primary);
     background: rgba(248, 250, 252, 0.8);
-    transition: all 0.3s ease;
+    transition: background-color 0.25s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                border-color 0.25s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                box-shadow 0.25s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                color 0.25s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
     outline: none;
 }
 
@@ -239,7 +246,8 @@ body {
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: all 0.3s ease;
+    transition: background-color 0.25s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                transform 0.15s ease-out;
 }
 
 .search-button:hover {
@@ -247,7 +255,7 @@ body {
 }
 
 .search-button:active {
-    transform: translateY(-50%) scale(0.95);
+    transform: translateY(-50%) scale(0.9);
 }
 
 /* Список вариантов */
@@ -256,19 +264,38 @@ body {
     top: calc(100% + 8px);
     left: 0;
     right: 0;
+    transform-origin: top center;
     background: var(--white);
     border-radius: 16px;
     box-shadow: 0 10px 30px rgba(0, 0, 0, 0.1);
     overflow-y: auto;
     overflow-x: hidden;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
     max-height: 200px;
     z-index: 10;
     border: 1px solid rgba(124, 185, 232, 0.2);
-    animation: fadeIn 0.3s ease;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transform: translateY(-6px) scale(0.98);
+    transition: opacity 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                transform 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                visibility 0s linear 0.2s;
 }
 
-.suggestions-list.hidden {
+.suggestions-list::-webkit-scrollbar {
     display: none;
+}
+
+.suggestions-list:not(.hidden) {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transform: translateY(0) scale(1);
+    transition: opacity 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                transform 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                visibility 0s linear 0s;
 }
 
 .suggestion-item {
@@ -277,7 +304,9 @@ body {
     color: var(--text-primary);
     cursor: pointer;
     text-align: left;
-    transition: all 0.2s ease;
+    transition: background-color 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                color 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                padding-left 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
     border-bottom: 1px solid rgba(0, 0, 0, 0.03);
 }
 
@@ -309,11 +338,13 @@ body {
     font-weight: 500;
     cursor: pointer;
     border-radius: 12px;
-    transition: all 0.3s ease;
+    transition: background-color 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                color 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                transform 0.12s ease-out;
     margin-bottom: 8px;
     margin-right: auto;
     width: fit-content;
-    animation: slideDown 0.6s ease;
+    animation: slideDown 0.6s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 .back-button:hover {

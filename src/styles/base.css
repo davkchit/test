@@ -2,6 +2,56 @@ html, body, #root {
     min-height: 100%;
 }
 
+:root {
+    /* Critically-damped "settle" curve — the default motion feel across the app.
+       No overshoot: correct for menus/sheets/theme changes, not for flicks. */
+    --ease-spring: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+        scroll-behavior: auto !important;
+    }
+}
+
+/* Translucent surfaces across every page (burger menu, floating widgets, modal
+   scrim, auth/welcome cards) fall back to a near-solid fill with no blur —
+   legibility over glass-material aesthetics when the user has asked for it. */
+@media (prefers-reduced-transparency: reduce) {
+    .burger-dropdown,
+    .support-widget,
+    .cookie-banner {
+        backdrop-filter: none !important;
+        background-color: #ffffff !important;
+    }
+    [data-theme="dark"] .burger-dropdown,
+    [data-theme="dark"] .support-widget,
+    [data-theme="dark"] .cookie-banner {
+        background-color: #1e293b !important;
+    }
+    .card {
+        backdrop-filter: none !important;
+    }
+    .modal-overlay.active {
+        backdrop-filter: none !important;
+        background-color: rgba(0, 0, 0, 0.75) !important;
+    }
+}
+
+@media (prefers-contrast: more) {
+    .burger-dropdown,
+    .support-widget,
+    .cookie-banner,
+    .date-picker-popup,
+    .modal-card,
+    .card {
+        border: 2px solid currentColor !important;
+    }
+}
+
 body {
     margin: 0;
 }
