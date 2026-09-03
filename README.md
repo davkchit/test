@@ -140,7 +140,11 @@ SQLite не стоит использовать, если проект буде�
 ## 5. Структура каталогов
 
 ```text
+<<<<<<< HEAD
 КАИ Расписание/
+=======
+kai-schedule/
+>>>>>>> 066d1d0c0ae1b9520697a96b19a92aa2dd45e032
 ├─ client-public/         # CSS и статические ассеты для Vite
 ├─ data/                  # SQLite база schedule.db
 ├─ dist/                  # production build фронтенда

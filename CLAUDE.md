@@ -4,7 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
+<<<<<<< HEAD
 КАИ Расписание is a full-stack university schedule management web app. Students browse schedules; admins manage them through a protected dashboard. Deployed on Railway.
+=======
+Full-stack university schedule management web app (KAI Schedule). Students browse schedules; admins manage them through a protected dashboard. Deployed on Railway.
+>>>>>>> 066d1d0c0ae1b9520697a96b19a92aa2dd45e032
 
 **Stack:** React 19 + Vite (frontend), Express 5 (backend), SQLite via better-sqlite3.
 
@@ -110,7 +114,11 @@ Endpoint: `POST /api/admin/schedule/upload-bulk`. Atomic — either all groups s
 
 ### Dark Theme
 
+<<<<<<< HEAD
 Toggle in `SchedulePage` header (desktop) and burger menu (mobile). Theme stored in `localStorage` as `anti_vuz_theme`. Applied globally to `document.documentElement` via `data-theme="dark"` attribute on app startup (`src/main.jsx`). CSS variables are overridden under `[data-theme="dark"]` in `schedule.css` and `welcome.css`.
+=======
+Toggle in `SchedulePage` header (desktop) and burger menu (mobile). Theme stored in `localStorage` as `kai_schedule_theme`. Applied globally to `document.documentElement` via `data-theme="dark"` attribute on app startup (`src/main.jsx`). CSS variables are overridden under `[data-theme="dark"]` in `schedule.css` and `welcome.css`.
+>>>>>>> 066d1d0c0ae1b9520697a96b19a92aa2dd45e032
 
 ### PWA Auto-Refresh
 
@@ -123,8 +131,11 @@ Toggle in `SchedulePage` header (desktop) and burger menu (mobile). Theme stored
 - Login is rate-limited via `login_attempts` table; all of `/api` additionally has a coarser volumetric rate limit (`express-rate-limit`, configurable via `API_RATE_LIMIT_MAX`/`API_RATE_LIMIT_WINDOW_MS`)
 - Optional IP allowlist via `ADMIN_ALLOWED_IPS`
 - CSP and security headers set in `app.js`
+<<<<<<< HEAD
 - `PUT /api/admin/account` changes the admin's username/password (requires current password) — the only account-management path that doesn't require the destructive `npm run seed`
 - Lesson creation derives `template_from_week` from the server clock, never from client input — an edit can only ever take effect from "now" forward, so a client can't retroactively rewrite what a past week showed
+=======
+>>>>>>> 066d1d0c0ae1b9520697a96b19a92aa2dd45e032
 
 ### Deployment Note (Railway)
 

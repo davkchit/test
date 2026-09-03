@@ -345,9 +345,97 @@ export default function AdminDashboardPage() {
         }
     }
 
+<<<<<<< HEAD
     function openEditModal(lesson, context = 'direct') {
         setEditMode('edit');
         setEditContext(context);
+=======
+    async function handleUploadSchedule() {
+        const trimmedJson = jsonInput.trim();
+
+        if (!trimmedJson) {
+            setUploadStatus({ type: 'error', message: 'Вставьте JSON' });
+            return;
+        }
+
+        let payload;
+
+        try {
+            payload = JSON.parse(trimmedJson);
+        } catch (error) {
+            setUploadStatus({ type: 'error', message: `Ошибка парсинга JSON: ${error.message}` });
+            return;
+        }
+
+        const weekValue = targetWeek === 'custom'
+            ? (() => {
+                if (!customWeekNumber.trim()) {
+                    setUploadStatus({ type: 'error', message: 'Введите номер недели' });
+                    return null;
+                }
+                return Number(customWeekNumber.trim());
+            })()
+            : targetWeek;
+
+        if (weekValue === null) return;
+
+        payload.target_week = weekValue;
+
+        if (weekValue === 'current') {
+            const { formatLocalDateForApi } = await import('../lib/date.js');
+            payload.reference_date = formatLocalDateForApi(new Date());
+        }
+
+        const isBulk = Array.isArray(payload.groups);
+        const endpoint = isBulk ? '/api/admin/schedule/upload-bulk' : '/api/admin/schedule/upload';
+
+        setIsUploading(true);
+        setUploadStatus({ type: '', message: '' });
+
+        try {
+            const response = await api(endpoint, {
+                method: 'POST',
+                body: JSON.stringify(payload)
+            });
+            const result = await response.json();
+
+            if (!response.ok) {
+                setUploadStatus({ type: 'error', message: result.error || 'Ошибка загрузки' });
+                return;
+            }
+
+            const appliedMessage = result.applied_to === 'template'
+                ? 'как шаблон семестра'
+                : `на неделю ${result.specific_week}`;
+
+            if (isBulk) {
+                setUploadStatus({
+                    type: 'success',
+                    message: `Загружено ${result.total_imported} занятий для ${result.groups.length} групп (${appliedMessage})`
+                });
+                setToastMessage(`Расписание для ${result.groups.length} групп обновлено`);
+            } else {
+                setUploadStatus({
+                    type: 'success',
+                    message: `Загружено ${result.imported} занятий для группы ${result.group} (${appliedMessage})`
+                });
+                setToastMessage(`Расписание для ${result.group} обновлено`);
+            }
+
+            if (selectedGroupId) {
+                loadLessons(selectedGroupId);
+            }
+        } catch (error) {
+            if (error.message !== 'UNAUTHORIZED') {
+                setUploadStatus({ type: 'error', message: 'Ошибка сети' });
+            }
+        } finally {
+            setIsUploading(false);
+        }
+    }
+
+    function openEditModal(lesson) {
+>>>>>>> 066d1d0c0ae1b9520697a96b19a92aa2dd45e032
         setEditForm({
             id: lesson.id,
             group_id: lesson.group_id,
