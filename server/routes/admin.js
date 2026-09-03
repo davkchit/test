@@ -24,6 +24,7 @@ const { addDaysToIsoDate, formatLocalDate, getWeekMeta, isValidIsoDate } = requi
 const { getCourseFromGroupName, getSemesterLabel } = require('../utils/course');
 const { resolveTemplateLessons } = require('../utils/templateResolve');
 const {
+    validateAccountUpdateBody,
     validateBulkScheduleUploadBody,
     validateGroupCreateBody,
     validateGroupUpdateBody,
@@ -100,6 +101,60 @@ router.use((req, res, next) => {
     next();
 });
 router.use(requireCsrf);
+
+router.put('/account', (req, res) => {
+    let payload;
+
+    try {
+        payload = validateAccountUpdateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+    const admin = db.prepare('SELECT * FROM admins WHERE id = ?').get(req.admin.id);
+
+    if (!admin || !bcrypt.compareSync(payload.current_password, admin.password_hash)) {
+        return res.status(401).json({ error: 'Неверный текущий пароль' });
+    }
+
+    if (payload.new_username && payload.new_username !== admin.username) {
+        const usernameTaken = db.prepare('SELECT id FROM admins WHERE username = ? AND id != ?')
+            .get(payload.new_username, admin.id);
+
+        if (usernameTaken) {
+            return res.status(409).json({ error: 'Этот логин уже занят' });
+        }
+    }
+
+    const nextUsername = payload.new_username || admin.username;
+    const nextPasswordHash = payload.new_password
+        ? bcrypt.hashSync(payload.new_password, 10)
+        : admin.password_hash;
+
+    db.prepare('UPDATE admins SET username = ?, password_hash = ? WHERE id = ?')
+        .run(nextUsername, nextPasswordHash, admin.id);
+
+    writeAuditLog(db, {
+        adminId: admin.id,
+        action: 'admin.update_credentials',
+        entityType: 'admin_account',
+        entityId: admin.id,
+        ipAddress: getClientAddress(req),
+        details: {
+            username_changed: Boolean(payload.new_username && payload.new_username !== admin.username),
+            password_changed: Boolean(payload.new_password)
+        }
+    });
+
+    // Refresh the session so the cookie reflects the new username immediately —
+    // otherwise the current browser session would keep showing the old one
+    // until the next login.
+    const token = createToken({ id: admin.id, username: nextUsername });
+    setAdminAuthCookie(res, token);
+    res.set('Cache-Control', 'no-store');
+    res.json({ success: true, username: nextUsername });
+});
 
 router.get('/groups', (req, res) => {
     const db = getDb();
@@ -766,6 +821,13 @@ router.post('/lessons', (req, res) => {
         return res.status(404).json({ error: 'Группа не найдена' });
     }
 
+    // Only matters for template rows (specific_week IS NULL) — always the real
+    // current week, never client-supplied, so a version can never claim to have
+    // taken effect in the past and silently rewrite what earlier weeks showed.
+    const semesterStartRow = db.prepare("SELECT value FROM settings WHERE key = 'semester_start_date'").get();
+    const semesterStart = semesterStartRow ? semesterStartRow.value : '2026-02-09';
+    const templateFromWeek = getWeekMeta(semesterStart, formatLocalDate()).weekNumber;
+
     const result = db.prepare(`
         INSERT INTO lessons (
             group_id, subgroup, day_of_week, week_type, specific_week,
@@ -779,7 +841,7 @@ router.post('/lessons', (req, res) => {
         payload.day_of_week,
         payload.week_type,
         payload.specific_week,
-        payload.template_from_week,
+        templateFromWeek,
         payload.is_removed ? 1 : 0,
         payload.time_start,
         payload.time_end,

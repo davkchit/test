@@ -24,6 +24,8 @@ if (generatedDevSecret) {
 const JWT_SECRET = jwtSecretFromEnv || generatedDevSecret;
 const PORT = Number(process.env.PORT || 3000);
 const ADMIN_COOKIE_NAME = process.env.ADMIN_COOKIE_NAME || 'anti_vuz_admin';
+const API_RATE_LIMIT_MAX = Number(process.env.API_RATE_LIMIT_MAX || 200);
+const API_RATE_LIMIT_WINDOW_MS = Number(process.env.API_RATE_LIMIT_WINDOW_MS || 60 * 1000);
 
 const baseCookieOptions = {
     httpOnly: true,
@@ -102,6 +104,8 @@ module.exports = {
     PORT,
     isProduction,
     JWT_SECRET,
+    API_RATE_LIMIT_MAX,
+    API_RATE_LIMIT_WINDOW_MS,
     TRUST_PROXY: trustProxyValue,
     ADMIN_ALLOWED_IPS: adminAllowedIps,
     BACKUPS_DIR: backupsDir,

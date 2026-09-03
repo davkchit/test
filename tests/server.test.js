@@ -12,7 +12,7 @@ const { createApp } = require('../server/app');
 const { ADMIN_COOKIE_NAME } = require('../server/config');
 const { createToken } = require('../server/middleware/auth');
 const { closeDb, getDb } = require('../server/db');
-const { getWeekMeta } = require('../server/utils/date');
+const { formatLocalDate, getWeekMeta } = require('../server/utils/date');
 const { resolveTemplateLessons } = require('../server/utils/templateResolve');
 
 test.afterEach(async () => {
@@ -407,6 +407,38 @@ test('editing the template mid-semester does not rewrite history for past weeks'
     await context.close();
 });
 
+test('POST /lessons ignores a client-supplied template_from_week and always anchors to the real current week', async () => {
+    const context = await createTestContext();
+
+    const response = await fetch(`${context.baseUrl}/api/admin/lessons`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            group_id: context.primaryGroupId,
+            day_of_week: 1,
+            time_start: '09:40',
+            time_end: '11:10',
+            subject: 'Подделанная версия',
+            subgroup: 0,
+            week_type: 1,
+            specific_week: null,
+            // An attacker (or a buggy client) claiming this version took effect
+            // back at week 1 must not be able to rewrite what week 1 showed.
+            template_from_week: 1,
+            is_removed: false
+        })
+    });
+    const created = await response.json();
+
+    assert.equal(response.status, 201);
+
+    const expectedWeek = getWeekMeta('2026-02-09', formatLocalDate()).weekNumber;
+    assert.equal(created.template_from_week, expectedWeek);
+    assert.notEqual(created.template_from_week, 1);
+
+    await context.close();
+});
+
 test('materialize-week clones the rest of the template, not just the touched slot', async () => {
     const context = await createTestContext();
     const db = getDb();
@@ -535,6 +567,109 @@ test('deleting a materialized week reverts the group back to the template', asyn
 
     const mondayVisible = resolveVisibleLessons(body.by_day[1] || [], 3, 1, new Set(body.exception_weeks));
     assert.deepEqual(mondayVisible.map((lesson) => lesson.subject), ['Высшая математика']);
+
+    await context.close();
+});
+
+test('PUT /account rejects a wrong current password', async () => {
+    const context = await createTestContext();
+
+    const response = await fetch(`${context.baseUrl}/api/admin/account`, {
+        method: 'PUT',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: 'wrong-password', new_password: 'new-password-123' })
+    });
+
+    assert.equal(response.status, 401);
+
+    await context.close();
+});
+
+test('PUT /account rejects a new password shorter than 8 characters', async () => {
+    const context = await createTestContext();
+
+    const response = await fetch(`${context.baseUrl}/api/admin/account`, {
+        method: 'PUT',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: 'admin123', new_password: 'short' })
+    });
+
+    assert.equal(response.status, 400);
+
+    await context.close();
+});
+
+test('PUT /account changes the password and the old password stops working', async () => {
+    const context = await createTestContext();
+
+    const updateResponse = await fetch(`${context.baseUrl}/api/admin/account`, {
+        method: 'PUT',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: 'admin123', new_password: 'new-password-123' })
+    });
+    const updateBody = await updateResponse.json();
+
+    assert.equal(updateResponse.status, 200);
+    assert.equal(updateBody.username, 'admin');
+
+    const oldLoginResponse = await fetch(`${context.baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'admin123' })
+    });
+    assert.equal(oldLoginResponse.status, 401);
+
+    const newLoginResponse = await fetch(`${context.baseUrl}/api/admin/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ username: 'admin', password: 'new-password-123' })
+    });
+    assert.equal(newLoginResponse.status, 200);
+
+    await context.close();
+});
+
+test('PUT /account changes the username and rejects a collision with an existing one', async () => {
+    const context = await createTestContext();
+    const db = getDb();
+
+    db.prepare('INSERT INTO admins (username, password_hash) VALUES (?, ?)')
+        .run('second_admin', bcrypt.hashSync('irrelevant-password', 10));
+
+    const collisionResponse = await fetch(`${context.baseUrl}/api/admin/account`, {
+        method: 'PUT',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: 'admin123', new_username: 'second_admin' })
+    });
+    assert.equal(collisionResponse.status, 409);
+
+    const okResponse = await fetch(`${context.baseUrl}/api/admin/account`, {
+        method: 'PUT',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ current_password: 'admin123', new_username: 'renamed_admin' })
+    });
+    const okBody = await okResponse.json();
+
+    assert.equal(okResponse.status, 200);
+    assert.equal(okBody.username, 'renamed_admin');
+
+    await context.close();
+});
+
+test('public API is rate-limited past the configured request budget', async () => {
+    const context = await createTestContext();
+
+    const requests = [];
+
+    for (let i = 0; i < 201; i += 1) {
+        requests.push(fetch(`${context.baseUrl}/api/universities`));
+    }
+
+    const responses = await Promise.all(requests);
+    const statuses = responses.map((response) => response.status);
+
+    assert.ok(statuses.includes(429), 'expected at least one request to be rate-limited');
+    assert.ok(statuses.filter((status) => status === 200).length <= 200);
 
     await context.close();
 });

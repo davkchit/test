@@ -310,7 +310,9 @@ function validateLessonCreateBody(body) {
         day_of_week: readInteger(body.day_of_week, 'День недели', { min: 1, max: 7 }),
         week_type: body.week_type === undefined ? 0 : readInteger(body.week_type, 'Тип недели', { min: 0, max: 2 }),
         specific_week: specificWeek,
-        template_from_week: body.template_from_week === undefined ? 1 : readInteger(body.template_from_week, 'Неделя вступления в силу', { min: 1 }),
+        // template_from_week is intentionally NOT accepted from the client: it's the
+        // anchor that makes "edits never rewrite history" hold, so it must always be
+        // derived server-side from the real current date, never trusted from the request.
         is_removed: Boolean(body.is_removed),
         time_start: timeStart,
         time_end: timeEnd,
@@ -354,6 +356,34 @@ function validateSettingsBody(body) {
     };
 }
 
+function validateAccountUpdateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    const result = {
+        current_password: readRequiredString(body.current_password, 'Текущий пароль', 255)
+    };
+
+    if (body.new_username !== undefined) {
+        result.new_username = readRequiredString(body.new_username, 'Новый логин', 100);
+    }
+
+    if (body.new_password !== undefined) {
+        const newPassword = readRequiredString(body.new_password, 'Новый пароль', 255);
+
+        if (newPassword.length < 8) {
+            throw createValidationError('Новый пароль должен быть не короче 8 символов');
+        }
+
+        result.new_password = newPassword;
+    }
+
+    if (result.new_username === undefined && result.new_password === undefined) {
+        throw createValidationError('Укажите новый логин или новый пароль');
+    }
+
+    return result;
+}
+
 function validateGroupUpdateBody(body) {
     assertPlainObject(body, 'Тело запроса должно быть объектом');
 
@@ -374,6 +404,7 @@ function validateGroupCreateBody(body) {
 
 module.exports = {
     createValidationError,
+    validateAccountUpdateBody,
     validateBulkScheduleUploadBody,
     validateGroupCreateBody,
     validateGroupUpdateBody,

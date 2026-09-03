@@ -566,7 +566,6 @@ export default function AdminDashboardPage() {
                         subgroup: Number(editForm.subgroup),
                         week_type: Number(editForm.week_type),
                         specific_week: null,
-                        template_from_week: todayWeekNumber,
                         is_removed: true
                     })
                 });
@@ -667,8 +666,7 @@ export default function AdminDashboardPage() {
                     body: JSON.stringify({
                         ...body,
                         group_id: Number(editForm.group_id),
-                        specific_week: null,
-                        template_from_week: todayWeekNumber
+                        specific_week: null
                     })
                 });
             } else if (editContext === 'materialize') {

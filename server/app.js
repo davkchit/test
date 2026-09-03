@@ -1,8 +1,9 @@
 const express = require('express');
+const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
 const { ensureAdminAccessAllowed } = require('./access-control');
-const { TRUST_PROXY } = require('./config');
+const { API_RATE_LIMIT_MAX, API_RATE_LIMIT_WINDOW_MS, TRUST_PROXY } = require('./config');
 const { getDb } = require('./db');
 
 const apiRoutes = require('./routes/api');
@@ -50,6 +51,16 @@ function createApp() {
     });
 
     app.use(express.json({ limit: '5mb' }));
+
+    // Coarse volumetric guard on top of everything under /api — a separate,
+    // stricter DB-backed limiter already protects /login specifically.
+    app.use('/api', rateLimit({
+        windowMs: API_RATE_LIMIT_WINDOW_MS,
+        limit: API_RATE_LIMIT_MAX,
+        standardHeaders: 'draft-7',
+        legacyHeaders: false,
+        message: { error: 'Слишком много запросов. Попробуйте позже.' }
+    }));
 
     app.use('/api/admin', ensureAdminAccessAllowed, adminRoutes);
     app.use('/admin', ensureAdminAccessAllowed);

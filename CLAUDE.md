@@ -41,7 +41,7 @@ Required for production (see `.env.example`):
 - `ADMIN_USERNAME` / `ADMIN_PASSWORD` — admin credentials
 - `NODE_ENV`, `PORT` (default 3000)
 
-Optional: `ADMIN_COOKIE_NAME`, `TRUST_PROXY`, `ADMIN_ALLOWED_IPS`, `BACKUPS_DIR`, `DB_PATH`
+Optional: `ADMIN_COOKIE_NAME`, `TRUST_PROXY`, `ADMIN_ALLOWED_IPS`, `BACKUPS_DIR`, `DB_PATH`, `API_RATE_LIMIT_MAX` (default 200/min), `API_RATE_LIMIT_WINDOW_MS` (default 60000)
 
 ## Architecture
 
@@ -120,9 +120,11 @@ Toggle in `SchedulePage` header (desktop) and burger menu (mobile). Theme stored
 
 - Admin auth: JWT stored in httpOnly, SameSite=Strict cookie
 - State-changing admin endpoints require CSRF token
-- Login is rate-limited via `login_attempts` table
+- Login is rate-limited via `login_attempts` table; all of `/api` additionally has a coarser volumetric rate limit (`express-rate-limit`, configurable via `API_RATE_LIMIT_MAX`/`API_RATE_LIMIT_WINDOW_MS`)
 - Optional IP allowlist via `ADMIN_ALLOWED_IPS`
 - CSP and security headers set in `app.js`
+- `PUT /api/admin/account` changes the admin's username/password (requires current password) — the only account-management path that doesn't require the destructive `npm run seed`
+- Lesson creation derives `template_from_week` from the server clock, never from client input — an edit can only ever take effect from "now" forward, so a client can't retroactively rewrite what a past week showed
 
 ### Deployment Note (Railway)
 
