@@ -23,13 +23,9 @@ if (generatedDevSecret) {
 
 const JWT_SECRET = jwtSecretFromEnv || generatedDevSecret;
 const PORT = Number(process.env.PORT || 3000);
-<<<<<<< HEAD
-const ADMIN_COOKIE_NAME = process.env.ADMIN_COOKIE_NAME || 'anti_vuz_admin';
+const ADMIN_COOKIE_NAME = process.env.ADMIN_COOKIE_NAME || 'kai_schedule_admin';
 const API_RATE_LIMIT_MAX = Number(process.env.API_RATE_LIMIT_MAX || 200);
 const API_RATE_LIMIT_WINDOW_MS = Number(process.env.API_RATE_LIMIT_WINDOW_MS || 60 * 1000);
-=======
-const ADMIN_COOKIE_NAME = process.env.ADMIN_COOKIE_NAME || 'kai_schedule_admin';
->>>>>>> 066d1d0c0ae1b9520697a96b19a92aa2dd45e032
 
 const baseCookieOptions = {
     httpOnly: true,
