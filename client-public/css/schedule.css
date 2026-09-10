@@ -151,7 +151,7 @@ body {
 .schedule-grid-wrap { flex: 1; display: flex; flex-direction: column; min-height: 0; padding-bottom: var(--grid-bottom-gap, 28px); box-sizing: border-box; }
 .schedule-grid { flex: 1; min-height: 0; display: flex; flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; cursor: grab; user-select: none; }
 .schedule-grid::-webkit-scrollbar { display: none; }
-.day-column { border-right: 1px solid var(--border-color); padding: 20px; display: flex; flex-direction: column; gap: 16px; flex: 0 0 20%; min-width: 300px; }
+.day-column { border-right: 2px solid var(--border-color); padding: 20px; display: flex; flex-direction: column; gap: 16px; flex: 0 0 20%; min-width: 300px; }
 .day-column:last-child { border-right: none; }
 .day-header { margin-bottom: 12px; }
 .day-badge { background-color: var(--primary-blue); color: white; font-size: 12px; padding: 4px 12px; border-radius: 12px; display: table; width: fit-content; margin-bottom: 8px; }

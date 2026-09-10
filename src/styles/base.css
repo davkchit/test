@@ -23,13 +23,17 @@ html, body, #root {
 @media (prefers-reduced-transparency: reduce) {
     .burger-dropdown,
     .support-widget,
-    .cookie-banner {
+    .cookie-banner,
+    .teacher-link,
+    .tl-page-header {
         backdrop-filter: none !important;
         background-color: #ffffff !important;
     }
     [data-theme="dark"] .burger-dropdown,
     [data-theme="dark"] .support-widget,
-    [data-theme="dark"] .cookie-banner {
+    [data-theme="dark"] .cookie-banner,
+    [data-theme="dark"] .teacher-link,
+    [data-theme="dark"] .tl-page-header {
         background-color: #1e293b !important;
     }
     .card {

@@ -1,6 +1,66 @@
 /* Extends welcome.css's search card with a results view — same card, same
    typography and spacing tokens, just a second state instead of a second page. */
 
+/* .tl-page stacks a small header above the same centered card welcome.css
+   already lays out — body still does the centering, this just groups the
+   header+card as one unit so the pair reads as this page's own identity
+   rather than another step of the group-search wizard. Room to grow: once
+   there's more than one thing to show a teacher, this header is where
+   section switching would go. */
+.tl-page {
+    width: 100%;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    position: relative;
+    z-index: 1;
+}
+
+.tl-page-header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 22px;
+    background: rgba(255, 255, 255, 0.65);
+    backdrop-filter: blur(16px) saturate(180%);
+    border: 1px solid rgba(255, 255, 255, 0.5);
+    border-radius: 999px;
+    box-shadow: 0 6px 20px rgba(124, 185, 232, 0.16);
+    animation: slideDown 0.6s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.tl-page-header img {
+    display: block;
+}
+
+.tl-page-header-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+}
+
+[data-theme="dark"] .tl-page-header {
+    background: rgba(30, 41, 59, 0.75);
+    border-color: rgba(255, 255, 255, 0.08);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.3);
+}
+
+[data-theme="dark"] .tl-page-header-title {
+    color: #f1f5f9;
+}
+
+@media (max-width: 480px) {
+    .tl-page-header {
+        padding: 8px 16px;
+    }
+
+    .tl-page-header-title {
+        font-size: 13px;
+    }
+}
+
 .tl-back {
     margin-bottom: 8px;
 }

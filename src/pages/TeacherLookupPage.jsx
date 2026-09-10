@@ -122,7 +122,12 @@ export default function TeacherLookupPage() {
     }
 
     return (
-        <div>
+        <div className="tl-page">
+            <header className="tl-page-header">
+                <img src="/assets/logo.png" alt="Логотип КАИ" width="72" height="30" />
+                <span className="tl-page-header-title">Учёт нагрузки</span>
+            </header>
+
             <div className="background-circles">
                 <div className="circle circle-1"></div>
                 <div className="circle circle-2"></div>
@@ -132,10 +137,6 @@ export default function TeacherLookupPage() {
 
             <div className="container">
                 <div className="card">
-                    <div className="icon">
-                        <img src="/assets/logo.png" alt="Логотип КАИ" width="180" height="75" />
-                    </div>
-
                     {!selectedTeacher ? (
                         <>
                             <h1 className="title">Проверить свои часы</h1>
