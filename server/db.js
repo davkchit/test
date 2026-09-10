@@ -217,12 +217,79 @@ function initTables() {
             updated_at        DATETIME DEFAULT CURRENT_TIMESTAMP
         );
 
+        -- Teaching-load tracking (independent of the schedule's own
+        -- semester_start_date setting — see the comment on semesters below).
+
+        CREATE TABLE IF NOT EXISTS teachers (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            full_name  TEXT NOT NULL UNIQUE,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        CREATE TABLE IF NOT EXISTS disciplines (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            name       TEXT NOT NULL UNIQUE,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- Deliberately separate from settings.semester_start_date (which only
+        -- ever tracks the one semester currently driving the public
+        -- schedule's week numbering). A load_plan row needs to stay scoped to
+        -- the semester it was entered for even after that setting moves
+        -- forward — otherwise last semester's plan would bleed into this
+        -- semester's hour count. The two are usually set to the same start
+        -- date by whoever manages the semester rollover, but are not
+        -- programmatically linked.
+        CREATE TABLE IF NOT EXISTS semesters (
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            label        TEXT NOT NULL,
+            start_date   TEXT NOT NULL,
+            weeks_count  INTEGER NOT NULL DEFAULT 18,
+            is_active    INTEGER NOT NULL DEFAULT 0,
+            created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
+        -- One row = "this teacher owes this many hours of this discipline's
+        -- this lesson type, for this one group, this semester." Streams
+        -- (one lecture shared by several groups) and subgroups are both
+        -- expressed by entering separate rows per group/subgroup rather than
+        -- a multiplier — confirmed against how the university's own system
+        -- tracks it (one row per group, hours counted per row).
+        CREATE TABLE IF NOT EXISTS load_plan (
+            id            INTEGER PRIMARY KEY AUTOINCREMENT,
+            semester_id   INTEGER NOT NULL REFERENCES semesters(id) ON DELETE CASCADE,
+            teacher_id    INTEGER NOT NULL REFERENCES teachers(id) ON DELETE CASCADE,
+            discipline_id INTEGER NOT NULL REFERENCES disciplines(id) ON DELETE CASCADE,
+            lesson_type   TEXT NOT NULL,
+            group_id      INTEGER NOT NULL REFERENCES groups_(id) ON DELETE CASCADE,
+            subgroup      INTEGER NOT NULL DEFAULT 0,
+            planned_hours INTEGER NOT NULL CHECK(planned_hours > 0),
+            entered_by    TEXT NOT NULL DEFAULT 'specialist' CHECK(entered_by IN ('specialist', 'teacher')),
+            confirmed     INTEGER NOT NULL DEFAULT 0,
+            created_at    DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
+
         CREATE INDEX IF NOT EXISTS idx_lessons_group   ON lessons(group_id);
         CREATE INDEX IF NOT EXISTS idx_lessons_day     ON lessons(group_id, day_of_week);
         CREATE INDEX IF NOT EXISTS idx_groups_univ     ON groups_(university_id);
         CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at DESC);
         CREATE INDEX IF NOT EXISTS idx_login_attempts_window_started_at ON login_attempts(window_started_at);
+        CREATE INDEX IF NOT EXISTS idx_load_plan_semester ON load_plan(semester_id);
+        CREATE INDEX IF NOT EXISTS idx_load_plan_teacher  ON load_plan(teacher_id);
     `);
+
+    // Nullable: only lessons relevant to load tracking get linked to a plan
+    // row. Ordinary schedule entries stay NULL forever — linking is opt-in
+    // per plan line, not a blanket requirement on the whole table. Runs
+    // after load_plan exists so the REFERENCES target is real.
+    try {
+        db.exec('ALTER TABLE lessons ADD COLUMN load_plan_id INTEGER REFERENCES load_plan(id) ON DELETE SET NULL');
+    } catch (err) {
+        // Ignored if column already exists
+    }
+
+    db.exec('CREATE INDEX IF NOT EXISTS idx_lessons_load_plan ON lessons(load_plan_id)');
 }
 
 function migrateLessonsDayOfWeekConstraint() {
