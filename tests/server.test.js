@@ -12,6 +12,7 @@ const { createApp } = require('../server/app');
 const { ADMIN_COOKIE_NAME } = require('../server/config');
 const { createToken } = require('../server/middleware/auth');
 const { closeDb, getDb } = require('../server/db');
+const { parseTrustProxy } = require('../server/config');
 const { formatLocalDate, getWeekMeta } = require('../server/utils/date');
 const { resolveTemplateLessons } = require('../server/utils/templateResolve');
 
@@ -97,6 +98,29 @@ test('an existing database is never overwritten by the seed snapshot', async () 
     delete process.env.SEED_DB_PATH;
     await fs.rm(seedDir, { recursive: true, force: true });
     await fs.rm(targetDir, { recursive: true, force: true });
+});
+
+test('parseTrustProxy resolves a bare digit to a hop count, not the permissive boolean', () => {
+    // This is the exact regression that shipped to Railway: TRUST_PROXY=1 was
+    // meant as "trust one proxy hop" but resolved to `true` ("trust every
+    // hop"), which express-rate-limit flags as ERR_ERL_PERMISSIVE_TRUST_PROXY
+    // because it lets a client spoof X-Forwarded-For to dodge rate limiting.
+    assert.equal(parseTrustProxy('1'), 1);
+    assert.equal(parseTrustProxy('0'), 0);
+    assert.equal(parseTrustProxy('2'), 2);
+    assert.equal(parseTrustProxy(' 1 '), 1);
+
+    // Word forms still mean the fully-permissive/disabled boolean settings.
+    assert.equal(parseTrustProxy('true'), true);
+    assert.equal(parseTrustProxy('yes'), true);
+    assert.equal(parseTrustProxy('on'), true);
+    assert.equal(parseTrustProxy('false'), false);
+    assert.equal(parseTrustProxy('no'), false);
+    assert.equal(parseTrustProxy('off'), false);
+
+    assert.equal(parseTrustProxy(undefined), false);
+    assert.equal(parseTrustProxy(''), false);
+    assert.equal(parseTrustProxy('not-a-number'), false);
 });
 
 test('getWeekMeta clamps dates before semester start to week 1', () => {

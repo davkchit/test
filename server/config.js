@@ -62,11 +62,21 @@ function parseTrustProxy(value) {
 
     const normalized = String(value).trim().toLowerCase();
 
-    if (['true', '1', 'yes', 'on'].includes(normalized)) {
+    // A bare non-negative integer means "trust exactly this many hops" (what
+    // Express and express-rate-limit want behind a single reverse proxy like
+    // Railway's edge) — checked BEFORE the word-based true/false so "1" and
+    // "0" resolve to the hop-count 1/0, not to the fully-permissive boolean
+    // `true` (which trusts every hop and lets a client spoof X-Forwarded-For
+    // to bypass IP-based rate limiting).
+    if (/^\d+$/.test(normalized)) {
+        return Number.parseInt(normalized, 10);
+    }
+
+    if (['true', 'yes', 'on'].includes(normalized)) {
         return true;
     }
 
-    if (['false', '0', 'no', 'off'].includes(normalized)) {
+    if (['false', 'no', 'off'].includes(normalized)) {
         return false;
     }
 
@@ -107,6 +117,7 @@ module.exports = {
     API_RATE_LIMIT_MAX,
     API_RATE_LIMIT_WINDOW_MS,
     TRUST_PROXY: trustProxyValue,
+    parseTrustProxy,
     ADMIN_ALLOWED_IPS: adminAllowedIps,
     BACKUPS_DIR: backupsDir,
     ADMIN_COOKIE_NAME,
