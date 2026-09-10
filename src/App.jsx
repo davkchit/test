@@ -5,6 +5,7 @@ const WelcomePage = lazy(() => import('./pages/WelcomePage'));
 const SchedulePage = lazy(() => import('./pages/SchedulePage'));
 const AdminLoginPage = lazy(() => import('./pages/AdminLoginPage'));
 const AdminDashboardPage = lazy(() => import('./pages/AdminDashboardPage'));
+const TeacherLookupPage = lazy(() => import('./pages/TeacherLookupPage'));
 
 export default function App() {
     return (
@@ -14,6 +15,7 @@ export default function App() {
                 <Route path="/schedule" element={<SchedulePage />} />
                 <Route path="/admin" element={<AdminLoginPage />} />
                 <Route path="/admin/dashboard" element={<AdminDashboardPage />} />
+                <Route path="/teacher" element={<TeacherLookupPage />} />
                 <Route path="*" element={<Navigate to="/" replace />} />
             </Routes>
         </Suspense>

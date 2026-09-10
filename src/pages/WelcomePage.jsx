@@ -335,6 +335,12 @@ export default function WelcomePage() {
                             </div>
                         </div>
                     </form>
+
+                    {currentStep === 0 && (
+                        <button type="button" className="teacher-link" onClick={() => navigate('/teacher')}>
+                            Я преподаватель — проверить свои часы
+                        </button>
+                    )}
                 </div>
             </div>
         </div>

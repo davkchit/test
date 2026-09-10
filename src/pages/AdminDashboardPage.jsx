@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import usePageAssets from '../hooks/usePageAssets';
 import { formatLocalDateForApi, getSemesterWeekNumber } from '../lib/date';
 import { resolveTemplateLessons } from '../lib/templateResolve';
+import AdminLoadSection from './AdminLoadSection';
 
 const DAY_NAMES = {
     1: 'Пн',
@@ -914,6 +915,19 @@ export default function AdminDashboardPage() {
                         Настройки
                     </button>
                     <button
+                        className={`nav-item ${activeSection === 'load' ? 'active' : ''}`}
+                        data-section="load"
+                        id="navLoad"
+                        onClick={() => setActiveSection('load')}
+                    >
+                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M12 20V10" />
+                            <path d="M18 20V4" />
+                            <path d="M6 20v-4" />
+                        </svg>
+                        Нагрузка
+                    </button>
+                    <button
                         className={`nav-item ${activeSection === 'backup' ? 'active' : ''}`}
                         data-section="backup"
                         id="navBackup"
@@ -1086,6 +1100,11 @@ export default function AdminDashboardPage() {
                     )}
                 </section>
 
+                <section className={`content-section ${activeSection === 'load' ? 'active' : ''}`} id="sectionLoad">
+                    {activeSection === 'load' && (
+                        <AdminLoadSection api={api} groups={groups} setToastMessage={setToastMessage} />
+                    )}
+                </section>
 
                 <section className={`content-section ${activeSection === 'settings' ? 'active' : ''}`} id="sectionSettings">
                     <h2 className="section-title">Настройки</h2>

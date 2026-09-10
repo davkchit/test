@@ -1,0 +1,140 @@
+/* Extends welcome.css's search card with a results view — same card, same
+   typography and spacing tokens, just a second state instead of a second page. */
+
+.tl-back {
+    margin-bottom: 8px;
+}
+
+.tl-teacher-name {
+    font-size: 28px;
+    margin-bottom: 4px;
+}
+
+.tl-semester-label {
+    margin-bottom: 28px;
+}
+
+.tl-error {
+    color: #ef4444;
+}
+
+.tl-card-list {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    text-align: left;
+}
+
+.tl-card {
+    background: #f0f9ff;
+    border-radius: 16px;
+    padding: 16px 18px;
+    transition: transform 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                box-shadow 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                background-color 0.3s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.tl-card:hover {
+    box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+}
+
+.tl-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 6px;
+}
+
+.tl-discipline {
+    font-weight: 600;
+    font-size: 15px;
+    color: #0f172a;
+    letter-spacing: -0.005em;
+}
+
+.tl-type-tag {
+    flex-shrink: 0;
+    background-color: #dbeafe;
+    color: #2563eb;
+    font-size: 11px;
+    font-weight: 500;
+    letter-spacing: 0.01em;
+    padding: 4px 8px;
+    border-radius: 6px;
+}
+
+.tl-card-meta {
+    font-size: 13px;
+    color: #64748b;
+    margin-bottom: 12px;
+}
+
+.tl-progress-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.tl-progress-track {
+    flex: 1;
+    height: 8px;
+    border-radius: 999px;
+    background: rgba(59, 130, 246, 0.12);
+    overflow: hidden;
+}
+
+.tl-progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: #3b82f6;
+    transition: width 0.4s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.tl-progress-fill.tl-progress-complete {
+    background: #10b981;
+}
+
+.tl-progress-label {
+    flex-shrink: 0;
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
+    white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+    .tl-teacher-name {
+        font-size: 22px;
+    }
+
+    .tl-card {
+        padding: 14px 16px;
+    }
+}
+
+/* Dark theme — mirrors the tokens welcome.css already defines for the card */
+[data-theme="dark"] .tl-discipline {
+    color: #f1f5f9;
+}
+
+[data-theme="dark"] .tl-card-meta {
+    color: #94a3b8;
+}
+
+[data-theme="dark"] .tl-progress-label {
+    color: #cbd5e1;
+}
+
+[data-theme="dark"] .tl-card {
+    background: #1e293b;
+}
+
+[data-theme="dark"] .tl-type-tag {
+    background-color: #1e3a5f;
+    color: #60a5fa;
+}
+
+[data-theme="dark"] .tl-progress-track {
+    background: rgba(96, 165, 250, 0.18);
+}

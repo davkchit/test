@@ -356,6 +356,35 @@ body {
     transform: scale(0.97);
 }
 
+.teacher-link {
+    display: block;
+    margin: 24px auto 0;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    padding: 8px 12px;
+    border-radius: 10px;
+    transition: background-color 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1)),
+                color 0.2s var(--ease-spring, cubic-bezier(0.22, 1, 0.36, 1));
+}
+
+.teacher-link:hover {
+    background: rgba(124, 185, 232, 0.08);
+    color: var(--text-primary);
+}
+
+.teacher-link:active {
+    transform: scale(0.97);
+}
+
+[data-theme="dark"] .teacher-link:hover {
+    background: rgba(59, 130, 246, 0.12);
+    color: #f1f5f9;
+}
+
 .back-button.hidden {
     display: none;
 }
