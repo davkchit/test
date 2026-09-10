@@ -4,6 +4,14 @@ const fs = require('fs');
 
 const DEFAULT_DB_PATH = path.join(__dirname, '..', 'data', 'schedule.db');
 
+// Lives outside data/ on purpose: when a persistent volume is mounted at
+// data/, the volume shadows whatever was baked into the image there — this
+// snapshot sits at a separate path so it survives that and can still seed a
+// brand-new (empty) volume on first boot. Updated periodically from a real
+// backup, not meant to be perfectly current — see server/backup-schedule.js
+// for the ongoing automated backups.
+const DEFAULT_SEED_DB_PATH = path.join(__dirname, '..', 'seed', 'schedule.seed.db');
+
 let db;
 let currentDbPath = null;
 
@@ -19,12 +27,47 @@ function resolveDbPath() {
         : path.resolve(process.cwd(), configuredPath);
 }
 
+function resolveSeedDbPath() {
+    const configuredPath = process.env.SEED_DB_PATH;
+
+    if (!configuredPath) {
+        return DEFAULT_SEED_DB_PATH;
+    }
+
+    return path.isAbsolute(configuredPath)
+        ? configuredPath
+        : path.resolve(process.cwd(), configuredPath);
+}
+
 function ensureDataDirectory(dbPath) {
     const dataDir = path.dirname(dbPath);
 
     if (!fs.existsSync(dataDir)) {
         fs.mkdirSync(dataDir, { recursive: true });
     }
+}
+
+/**
+ * A brand-new persistent volume (or a fresh deploy with no DB_PATH override)
+ * starts with nothing at the target path. Rather than silently boot an empty
+ * schema — which would look like every group/lesson/admin vanished — seed it
+ * from the last known-good snapshot committed alongside the code. This only
+ * ever fires when the target file doesn't exist yet; it never overwrites a
+ * database that's already there.
+ */
+function bootstrapFromSeedIfMissing(dbPath) {
+    if (fs.existsSync(dbPath)) {
+        return;
+    }
+
+    const seedPath = resolveSeedDbPath();
+
+    if (!fs.existsSync(seedPath)) {
+        return;
+    }
+
+    fs.copyFileSync(seedPath, dbPath);
+    console.log(`[db] No database found at ${dbPath} — bootstrapped from seed snapshot (${seedPath}).`);
 }
 
 /**
@@ -43,6 +86,7 @@ function getDb() {
     }
 
     ensureDataDirectory(nextDbPath);
+    bootstrapFromSeedIfMissing(nextDbPath);
 
     db = new Database(nextDbPath);
     currentDbPath = nextDbPath;

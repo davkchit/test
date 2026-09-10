@@ -19,12 +19,84 @@ test.afterEach(async () => {
     closeDb();
     delete process.env.ADMIN_ALLOWED_IPS;
     delete process.env.BACKUPS_DIR;
+    delete process.env.SEED_DB_PATH;
 
     if (process.env.DB_PATH) {
         const tempDir = path.dirname(process.env.DB_PATH);
         await fs.rm(tempDir, { recursive: true, force: true });
         delete process.env.DB_PATH;
     }
+});
+
+test('a missing database bootstraps from the seed snapshot instead of booting empty', async () => {
+    // Build a tiny "seed" database with one recognizable marker row.
+    const seedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anti-vuz-seed-'));
+    const seedDbPath = path.join(seedDir, 'schedule.seed.db');
+
+    process.env.DB_PATH = seedDbPath;
+    closeDb();
+    getDb().prepare('INSERT INTO universities (name, short_name) VALUES (?, ?)')
+        .run('Seed University', 'SEED-MARKER');
+    closeDb();
+    delete process.env.DB_PATH;
+
+    // Point at a target path that does not exist yet, with SEED_DB_PATH set.
+    const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anti-vuz-target-'));
+    const targetDbPath = path.join(targetDir, 'schedule.db');
+
+    process.env.DB_PATH = targetDbPath;
+    process.env.SEED_DB_PATH = seedDbPath;
+
+    const db = getDb();
+    const university = db.prepare('SELECT * FROM universities WHERE short_name = ?').get('SEED-MARKER');
+
+    assert.ok(university, 'expected the target database to be bootstrapped from the seed snapshot');
+    assert.equal(university.name, 'Seed University');
+
+    closeDb();
+    delete process.env.DB_PATH;
+    delete process.env.SEED_DB_PATH;
+    await fs.rm(seedDir, { recursive: true, force: true });
+    await fs.rm(targetDir, { recursive: true, force: true });
+});
+
+test('an existing database is never overwritten by the seed snapshot', async () => {
+    const seedDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anti-vuz-seed-'));
+    const seedDbPath = path.join(seedDir, 'schedule.seed.db');
+
+    process.env.DB_PATH = seedDbPath;
+    closeDb();
+    getDb().prepare('INSERT INTO universities (name, short_name) VALUES (?, ?)')
+        .run('Seed University', 'SEED-MARKER');
+    closeDb();
+    delete process.env.DB_PATH;
+
+    // Target already has its own real data before bootstrap ever runs.
+    const targetDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anti-vuz-target-'));
+    const targetDbPath = path.join(targetDir, 'schedule.db');
+
+    process.env.DB_PATH = targetDbPath;
+    closeDb();
+    getDb().prepare('INSERT INTO universities (name, short_name) VALUES (?, ?)')
+        .run('Real University', 'REAL-DATA');
+    closeDb();
+    delete process.env.DB_PATH;
+
+    process.env.DB_PATH = targetDbPath;
+    process.env.SEED_DB_PATH = seedDbPath;
+
+    const db = getDb();
+    const seedRow = db.prepare('SELECT * FROM universities WHERE short_name = ?').get('SEED-MARKER');
+    const realRow = db.prepare('SELECT * FROM universities WHERE short_name = ?').get('REAL-DATA');
+
+    assert.equal(seedRow, undefined, 'seed data must not be merged into an already-existing database');
+    assert.ok(realRow, 'the real, pre-existing data must be untouched');
+
+    closeDb();
+    delete process.env.DB_PATH;
+    delete process.env.SEED_DB_PATH;
+    await fs.rm(seedDir, { recursive: true, force: true });
+    await fs.rm(targetDir, { recursive: true, force: true });
 });
 
 test('getWeekMeta clamps dates before semester start to week 1', () => {
