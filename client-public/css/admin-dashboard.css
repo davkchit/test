@@ -250,6 +250,8 @@ body { font-family: 'Inter', sans-serif; background: var(--bg); color: var(--tex
 
 /* Load tracking */
 .load-section { max-width: 920px; }
+.load-plan-heading-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+.load-plan-heading-row .subsection-title { margin-bottom: 0; }
 
 .load-semester-list { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
 .load-semester-chip {

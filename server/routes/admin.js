@@ -8,6 +8,7 @@ const {
 } = require('../backups');
 const { getDb } = require('../db');
 const { buildScheduleWorkbook } = require('../exportSchedule');
+const { buildLoadWorkbook } = require('../exportLoad');
 const {
     clearAdminAuthCookie,
     createToken,
@@ -1359,6 +1360,88 @@ router.get('/load-plan', (req, res) => {
     // be reflected on the very next read, not after some cache expires.
     const exceptionWeeksCache = new Map();
     res.json(rows.map((row) => attachLoadProgress(db, row, exceptionWeeksCache)));
+});
+
+// Excel report: summary + per-discipline breakdown + per-date ledger. Can be
+// pulled at any point in the semester — see buildLoadWorkbook's own comment
+// for why the numbers are always an honest snapshot of "as of right now".
+router.get('/load-plan/export', async (req, res) => {
+    const db = getDb();
+    let semester;
+
+    if (req.query.semester_id) {
+        const semesterId = Number.parseInt(req.query.semester_id, 10);
+
+        if (!Number.isInteger(semesterId) || semesterId <= 0) {
+            return res.status(400).json({ error: 'Некорректный semester_id' });
+        }
+
+        semester = db.prepare('SELECT * FROM semesters WHERE id = ?').get(semesterId);
+    } else {
+        semester = db.prepare('SELECT * FROM semesters WHERE is_active = 1 ORDER BY start_date DESC LIMIT 1').get();
+    }
+
+    if (!semester) {
+        return res.status(404).json({ error: 'Семестр не найден' });
+    }
+
+    const planRows = db.prepare(`
+        SELECT lp.*, t.full_name AS teacher_name, d.name AS discipline_name, g.name AS group_name
+        FROM load_plan lp
+        JOIN teachers t ON t.id = lp.teacher_id
+        JOIN disciplines d ON d.id = lp.discipline_id
+        JOIN groups_ g ON g.id = lp.group_id
+        WHERE lp.semester_id = ?
+        ORDER BY t.full_name, d.name, lp.lesson_type
+    `).all(semester.id);
+
+    const exceptionWeeksCache = new Map();
+
+    const rows = planRows.map((row) => {
+        const cacheKey = `${row.group_id}:${semester.id}`;
+        let exceptionWeeks = exceptionWeeksCache.get(cacheKey);
+
+        if (!exceptionWeeks) {
+            const overrideRows = db.prepare(`
+                SELECT specific_week FROM lessons
+                WHERE group_id = ? AND specific_week IS NOT NULL
+            `).all(row.group_id);
+            exceptionWeeks = computeExceptionWeeks(overrideRows, semester.weeks_count);
+            exceptionWeeksCache.set(cacheKey, exceptionWeeks);
+        }
+
+        const linkedLessons = db.prepare('SELECT * FROM lessons WHERE load_plan_id = ?').all(row.id);
+        const progress = computeLoadProgress({
+            semesterStartDate: semester.start_date,
+            weeksCount: semester.weeks_count,
+            linkedLessons,
+            exceptionWeeks
+        });
+
+        return {
+            teacher_name: row.teacher_name,
+            discipline_name: row.discipline_name,
+            lesson_type: row.lesson_type,
+            group_name: row.group_name,
+            subgroup: row.subgroup,
+            planned_hours: row.planned_hours,
+            occurred_hours: progress.occurred_hours,
+            occurrences: progress.occurrences
+        };
+    });
+
+    try {
+        const workbook = buildLoadWorkbook({ semesterLabel: semester.label, rows });
+        const fileName = `nagruzka-${semester.label.replace(/[^\wа-яА-ЯёЁ-]+/gu, '_')}.xlsx`;
+
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+        res.setHeader('Content-Disposition', `attachment; filename="${encodeURIComponent(fileName)}"`);
+        await workbook.xlsx.write(res);
+        res.end();
+    } catch (error) {
+        console.error('Load export error:', error);
+        res.status(500).json({ error: 'Не удалось сформировать отчёт' });
+    }
 });
 
 router.post('/load-plan', (req, res) => {

@@ -385,7 +385,17 @@ export default function AdminLoadSection({ api, groups, setToastMessage }) {
                 </div>
             </div>
 
-            <h3 className="subsection-title">План нагрузки {activeSemester ? `— ${activeSemester.label}` : ''}</h3>
+            <div className="load-plan-heading-row">
+                <h3 className="subsection-title">План нагрузки {activeSemester ? `— ${activeSemester.label}` : ''}</h3>
+                {activeSemester && (
+                    <a
+                        className="btn btn-secondary"
+                        href={`/api/admin/load-plan/export?semester_id=${activeSemester.id}`}
+                    >
+                        Выгрузить в Excel
+                    </a>
+                )}
+            </div>
 
             {!activeSemester ? (
                 <p className="empty-message">Активируйте семестр выше, чтобы вести план.</p>
