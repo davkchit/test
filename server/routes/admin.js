@@ -23,17 +23,25 @@ const {
 const { addDaysToIsoDate, formatLocalDate, getWeekMeta, isValidIsoDate } = require('../utils/date');
 const { getCourseFromGroupName, getSemesterLabel } = require('../utils/course');
 const { resolveTemplateLessons } = require('../utils/templateResolve');
+const { computeExceptionWeeks, computeLoadProgress } = require('../utils/loadCalc');
 const {
     validateAccountUpdateBody,
     validateBulkScheduleUploadBody,
+    validateDisciplineCreateBody,
     validateGroupCreateBody,
     validateGroupUpdateBody,
     validateLessonCreateBody,
+    validateLessonLoadPlanLinkBody,
     validateLessonUpdateBody,
+    validateLoadPlanCreateBody,
+    validateLoadPlanUpdateBody,
     validateLoginBody,
     validateMaterializeWeekBody,
     validateScheduleUploadBody,
-    validateSettingsBody
+    validateSemesterCreateBody,
+    validateSemesterUpdateBody,
+    validateSettingsBody,
+    validateTeacherCreateBody
 } = require('../validation');
 
 const router = express.Router();
@@ -1126,6 +1134,475 @@ router.get('/backups/:fileName/download', async (req, res) => {
 
     res.download(filePath, req.params.fileName);
 });
+
+// ---------------------------------------------------------------------------
+// Teaching-load tracking: teachers, disciplines, semesters, and the load plan
+// itself. All of this sits behind the same admin auth as everything else in
+// this router — there is no separate, unauthenticated write path for
+// teachers. The "either the specialist or the teacher can enter the plan"
+// flexibility the department asked for is expressed by the entered_by tag
+// on each row (who the number came from), not by a second login system;
+// teachers only ever get read access, via the public search endpoint in
+// routes/api.js.
+// ---------------------------------------------------------------------------
+
+router.get('/teachers', (req, res) => {
+    const db = getDb();
+    const rows = db.prepare('SELECT * FROM teachers ORDER BY full_name').all();
+    res.json(rows);
+});
+
+router.post('/teachers', (req, res) => {
+    let payload;
+
+    try {
+        payload = validateTeacherCreateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+
+    try {
+        const result = db.prepare('INSERT INTO teachers (full_name) VALUES (?)').run(payload.full_name);
+        const created = db.prepare('SELECT * FROM teachers WHERE id = ?').get(result.lastInsertRowid);
+
+        writeAuditLog(db, {
+            adminId: req.admin.id,
+            action: 'teacher.create',
+            entityType: 'teacher',
+            entityId: created.id,
+            ipAddress: getClientAddress(req),
+            details: { full_name: created.full_name }
+        });
+
+        res.status(201).json(created);
+    } catch (error) {
+        if (String(error.message).includes('UNIQUE')) {
+            return res.status(409).json({ error: 'Такой преподаватель уже есть в справочнике' });
+        }
+
+        console.error('Teacher create error:', error);
+        res.status(500).json({ error: 'Не удалось добавить преподавателя' });
+    }
+});
+
+router.get('/disciplines', (req, res) => {
+    const db = getDb();
+    const rows = db.prepare('SELECT * FROM disciplines ORDER BY name').all();
+    res.json(rows);
+});
+
+router.post('/disciplines', (req, res) => {
+    let payload;
+
+    try {
+        payload = validateDisciplineCreateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+
+    try {
+        const result = db.prepare('INSERT INTO disciplines (name) VALUES (?)').run(payload.name);
+        const created = db.prepare('SELECT * FROM disciplines WHERE id = ?').get(result.lastInsertRowid);
+
+        writeAuditLog(db, {
+            adminId: req.admin.id,
+            action: 'discipline.create',
+            entityType: 'discipline',
+            entityId: created.id,
+            ipAddress: getClientAddress(req),
+            details: { name: created.name }
+        });
+
+        res.status(201).json(created);
+    } catch (error) {
+        if (String(error.message).includes('UNIQUE')) {
+            return res.status(409).json({ error: 'Такая дисциплина уже есть в справочнике' });
+        }
+
+        console.error('Discipline create error:', error);
+        res.status(500).json({ error: 'Не удалось добавить дисциплину' });
+    }
+});
+
+router.get('/semesters', (req, res) => {
+    const db = getDb();
+    const rows = db.prepare('SELECT * FROM semesters ORDER BY start_date DESC').all();
+    res.json(rows.map(mapSemesterRow));
+});
+
+router.post('/semesters', (req, res) => {
+    let payload;
+
+    try {
+        payload = validateSemesterCreateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+    const result = db.prepare(`
+        INSERT INTO semesters (label, start_date, weeks_count, is_active)
+        VALUES (?, ?, ?, 0)
+    `).run(payload.label, payload.start_date, payload.weeks_count);
+    const created = db.prepare('SELECT * FROM semesters WHERE id = ?').get(result.lastInsertRowid);
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'semester.create',
+        entityType: 'semester',
+        entityId: created.id,
+        ipAddress: getClientAddress(req),
+        details: payload
+    });
+
+    res.status(201).json(mapSemesterRow(created));
+});
+
+router.put('/semesters/:id', (req, res) => {
+    const semesterId = Number.parseInt(req.params.id, 10);
+
+    if (!Number.isInteger(semesterId) || semesterId <= 0) {
+        return res.status(400).json({ error: 'Некорректный ID семестра' });
+    }
+
+    let payload;
+
+    try {
+        payload = validateSemesterUpdateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+    const existing = db.prepare('SELECT * FROM semesters WHERE id = ?').get(semesterId);
+
+    if (!existing) {
+        return res.status(404).json({ error: 'Семестр не найден' });
+    }
+
+    const next = { ...existing, ...payload };
+
+    const transaction = db.transaction(() => {
+        // Only one semester drives "which one am I entering/viewing load for"
+        // by default — activating this one deactivates every other.
+        if (payload.is_active) {
+            db.prepare('UPDATE semesters SET is_active = 0 WHERE id != ?').run(semesterId);
+        }
+
+        db.prepare(`
+            UPDATE semesters
+            SET label = ?, start_date = ?, weeks_count = ?, is_active = ?
+            WHERE id = ?
+        `).run(next.label, next.start_date, next.weeks_count, next.is_active ? 1 : 0, semesterId);
+    });
+
+    transaction();
+
+    const updated = db.prepare('SELECT * FROM semesters WHERE id = ?').get(semesterId);
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'semester.update',
+        entityType: 'semester',
+        entityId: semesterId,
+        ipAddress: getClientAddress(req),
+        details: payload
+    });
+
+    res.json(mapSemesterRow(updated));
+});
+
+router.get('/load-plan', (req, res) => {
+    const db = getDb();
+    const filters = [];
+    const params = [];
+
+    for (const [column, key] of [['semester_id', 'semester_id'], ['teacher_id', 'teacher_id'], ['group_id', 'group_id']]) {
+        const raw = req.query[key];
+
+        if (raw === undefined || raw === '') {
+            continue;
+        }
+
+        const value = Number.parseInt(raw, 10);
+
+        if (!Number.isInteger(value) || value <= 0) {
+            return res.status(400).json({ error: `Некорректный ${key}` });
+        }
+
+        filters.push(`lp.${column} = ?`);
+        params.push(value);
+    }
+
+    const whereClause = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
+
+    const rows = db.prepare(`
+        SELECT
+            lp.*,
+            t.full_name AS teacher_name,
+            d.name AS discipline_name,
+            g.name AS group_name
+        FROM load_plan lp
+        JOIN teachers t ON t.id = lp.teacher_id
+        JOIN disciplines d ON d.id = lp.discipline_id
+        JOIN groups_ g ON g.id = lp.group_id
+        ${whereClause}
+        ORDER BY t.full_name, d.name, lp.lesson_type
+    `).all(...params);
+
+    // Scoped to this one request only — never cached across requests, since
+    // a specialist materializing a week (adding a new exception week) must
+    // be reflected on the very next read, not after some cache expires.
+    const exceptionWeeksCache = new Map();
+    res.json(rows.map((row) => attachLoadProgress(db, row, exceptionWeeksCache)));
+});
+
+router.post('/load-plan', (req, res) => {
+    let payload;
+
+    try {
+        payload = validateLoadPlanCreateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+
+    const semester = db.prepare('SELECT id FROM semesters WHERE id = ?').get(payload.semester_id);
+    if (!semester) {
+        return res.status(404).json({ error: 'Семестр не найден' });
+    }
+
+    const teacher = db.prepare('SELECT id FROM teachers WHERE id = ?').get(payload.teacher_id);
+    if (!teacher) {
+        return res.status(404).json({ error: 'Преподаватель не найден' });
+    }
+
+    const discipline = db.prepare('SELECT id FROM disciplines WHERE id = ?').get(payload.discipline_id);
+    if (!discipline) {
+        return res.status(404).json({ error: 'Дисциплина не найдена' });
+    }
+
+    const group = db.prepare('SELECT id FROM groups_ WHERE id = ?').get(payload.group_id);
+    if (!group) {
+        return res.status(404).json({ error: 'Группа не найдена' });
+    }
+
+    const result = db.prepare(`
+        INSERT INTO load_plan (
+            semester_id, teacher_id, discipline_id, lesson_type,
+            group_id, subgroup, planned_hours, entered_by, confirmed
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+        payload.semester_id,
+        payload.teacher_id,
+        payload.discipline_id,
+        payload.lesson_type,
+        payload.group_id,
+        payload.subgroup,
+        payload.planned_hours,
+        payload.entered_by,
+        payload.entered_by === 'specialist' ? 1 : 0
+    );
+
+    const created = db.prepare(`
+        SELECT lp.*, t.full_name AS teacher_name, d.name AS discipline_name, g.name AS group_name
+        FROM load_plan lp
+        JOIN teachers t ON t.id = lp.teacher_id
+        JOIN disciplines d ON d.id = lp.discipline_id
+        JOIN groups_ g ON g.id = lp.group_id
+        WHERE lp.id = ?
+    `).get(result.lastInsertRowid);
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'load_plan.create',
+        entityType: 'load_plan',
+        entityId: created.id,
+        ipAddress: getClientAddress(req),
+        details: payload
+    });
+
+    res.status(201).json(attachLoadProgress(db, created));
+});
+
+router.put('/load-plan/:id', (req, res) => {
+    const planId = Number.parseInt(req.params.id, 10);
+
+    if (!Number.isInteger(planId) || planId <= 0) {
+        return res.status(400).json({ error: 'Некорректный ID плана' });
+    }
+
+    let payload;
+
+    try {
+        payload = validateLoadPlanUpdateBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+    const existing = db.prepare('SELECT * FROM load_plan WHERE id = ?').get(planId);
+
+    if (!existing) {
+        return res.status(404).json({ error: 'Строка плана не найдена' });
+    }
+
+    const next = { ...existing, ...payload };
+
+    db.prepare(`
+        UPDATE load_plan
+        SET planned_hours = ?, confirmed = ?, updated_at = CURRENT_TIMESTAMP
+        WHERE id = ?
+    `).run(next.planned_hours, next.confirmed ? 1 : 0, planId);
+
+    const updated = db.prepare(`
+        SELECT lp.*, t.full_name AS teacher_name, d.name AS discipline_name, g.name AS group_name
+        FROM load_plan lp
+        JOIN teachers t ON t.id = lp.teacher_id
+        JOIN disciplines d ON d.id = lp.discipline_id
+        JOIN groups_ g ON g.id = lp.group_id
+        WHERE lp.id = ?
+    `).get(planId);
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'load_plan.update',
+        entityType: 'load_plan',
+        entityId: planId,
+        ipAddress: getClientAddress(req),
+        details: payload
+    });
+
+    res.json(attachLoadProgress(db, updated));
+});
+
+router.delete('/load-plan/:id', (req, res) => {
+    const planId = Number.parseInt(req.params.id, 10);
+
+    if (!Number.isInteger(planId) || planId <= 0) {
+        return res.status(400).json({ error: 'Некорректный ID плана' });
+    }
+
+    const db = getDb();
+    const result = db.prepare('DELETE FROM load_plan WHERE id = ?').run(planId);
+
+    if (result.changes === 0) {
+        return res.status(404).json({ error: 'Строка плана не найдена' });
+    }
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'load_plan.delete',
+        entityType: 'load_plan',
+        entityId: planId,
+        ipAddress: getClientAddress(req),
+        details: null
+    });
+
+    res.json({ success: true });
+});
+
+// Links (or unlinks, with load_plan_id: null) one schedule entry to a plan
+// row — this is what tells the calculator which recurring slot in the
+// schedule counts toward that plan's hours.
+router.put('/lessons/:id/load-plan', (req, res) => {
+    const lessonId = Number.parseInt(req.params.id, 10);
+
+    if (!Number.isInteger(lessonId) || lessonId <= 0) {
+        return res.status(400).json({ error: 'Некорректный ID занятия' });
+    }
+
+    let payload;
+
+    try {
+        payload = validateLessonLoadPlanLinkBody(req.body);
+    } catch (error) {
+        return res.status(error.statusCode || 400).json({ error: error.message });
+    }
+
+    const db = getDb();
+    const lesson = db.prepare('SELECT id FROM lessons WHERE id = ?').get(lessonId);
+
+    if (!lesson) {
+        return res.status(404).json({ error: 'Занятие не найдено' });
+    }
+
+    if (payload.load_plan_id !== null) {
+        const plan = db.prepare('SELECT id FROM load_plan WHERE id = ?').get(payload.load_plan_id);
+
+        if (!plan) {
+            return res.status(404).json({ error: 'Строка плана не найдена' });
+        }
+    }
+
+    db.prepare('UPDATE lessons SET load_plan_id = ? WHERE id = ?').run(payload.load_plan_id, lessonId);
+
+    writeAuditLog(db, {
+        adminId: req.admin.id,
+        action: 'lesson.link_load_plan',
+        entityType: 'lesson',
+        entityId: lessonId,
+        ipAddress: getClientAddress(req),
+        details: { load_plan_id: payload.load_plan_id }
+    });
+
+    res.json({ success: true, lesson_id: lessonId, load_plan_id: payload.load_plan_id });
+});
+
+function mapSemesterRow(row) {
+    return { ...row, is_active: Boolean(row.is_active) };
+}
+
+// One request can list many load_plan rows that share a group+semester —
+// pass a shared Map so a listing doesn't recompute exception weeks once per
+// row. Scoped to a single request by the caller (never module-level — the
+// schedule can change between requests, and a stale cache would silently
+// miscount hours until the process restarts).
+function attachLoadProgress(db, planRow, exceptionWeeksCache = new Map()) {
+    const semester = db.prepare('SELECT * FROM semesters WHERE id = ?').get(planRow.semester_id);
+
+    if (!semester) {
+        return { ...planRow, confirmed: Boolean(planRow.confirmed), progress: null };
+    }
+
+    const cacheKey = `${planRow.group_id}:${semester.id}`;
+    let exceptionWeeks = exceptionWeeksCache.get(cacheKey);
+
+    if (!exceptionWeeks) {
+        const overrideRows = db.prepare(`
+            SELECT specific_week FROM lessons
+            WHERE group_id = ? AND specific_week IS NOT NULL
+        `).all(planRow.group_id);
+        exceptionWeeks = computeExceptionWeeks(overrideRows, semester.weeks_count);
+        exceptionWeeksCache.set(cacheKey, exceptionWeeks);
+    }
+
+    const linkedLessons = db.prepare('SELECT * FROM lessons WHERE load_plan_id = ?').all(planRow.id);
+
+    const progress = computeLoadProgress({
+        semesterStartDate: semester.start_date,
+        weeksCount: semester.weeks_count,
+        linkedLessons,
+        exceptionWeeks
+    });
+
+    return {
+        ...planRow,
+        confirmed: Boolean(planRow.confirmed),
+        progress: {
+            occurred_hours: progress.occurred_hours,
+            occurred_count: progress.occurred_count,
+            planned_hours: planRow.planned_hours,
+            remaining_hours: Math.max(0, planRow.planned_hours - progress.occurred_hours)
+        }
+    };
+}
 
 function getClientAddress(req) {
     return req.ip || req.socket.remoteAddress || 'unknown';

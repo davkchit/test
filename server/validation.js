@@ -402,16 +402,136 @@ function validateGroupCreateBody(body) {
     };
 }
 
+function validateTeacherCreateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    return {
+        full_name: readRequiredString(body.full_name, 'ФИО преподавателя', 200)
+    };
+}
+
+function validateDisciplineCreateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    return {
+        name: readRequiredString(body.name, 'Название дисциплины', 200)
+    };
+}
+
+function validateSemesterCreateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    const startDate = readRequiredString(body.start_date, 'Дата начала семестра', 10);
+
+    if (!isValidIsoDate(startDate)) {
+        throw createValidationError('Дата начала семестра должна быть в формате YYYY-MM-DD');
+    }
+
+    return {
+        label: readRequiredString(body.label, 'Название семестра', 100),
+        start_date: startDate,
+        weeks_count: body.weeks_count === undefined ? 18 : readInteger(body.weeks_count, 'Количество недель', { min: 1, max: 52 })
+    };
+}
+
+function validateSemesterUpdateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    const result = {};
+
+    if (body.label !== undefined) {
+        result.label = readRequiredString(body.label, 'Название семестра', 100);
+    }
+
+    if (body.start_date !== undefined) {
+        const startDate = readRequiredString(body.start_date, 'Дата начала семестра', 10);
+
+        if (!isValidIsoDate(startDate)) {
+            throw createValidationError('Дата начала семестра должна быть в формате YYYY-MM-DD');
+        }
+
+        result.start_date = startDate;
+    }
+
+    if (body.weeks_count !== undefined) {
+        result.weeks_count = readInteger(body.weeks_count, 'Количество недель', { min: 1, max: 52 });
+    }
+
+    if (body.is_active !== undefined) {
+        result.is_active = Boolean(body.is_active);
+    }
+
+    return result;
+}
+
+const LOAD_PLAN_LESSON_TYPES = ['Лекция', 'Практика', 'Лаб', 'Консультация', 'Зачёт', 'Экзамен'];
+
+function validateLoadPlanCreateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    const lessonType = readRequiredString(body.lesson_type, 'Вид занятия', 50);
+
+    if (!LOAD_PLAN_LESSON_TYPES.includes(lessonType)) {
+        throw createValidationError(`Вид занятия должен быть одним из: ${LOAD_PLAN_LESSON_TYPES.join(', ')}`);
+    }
+
+    return {
+        semester_id: readInteger(body.semester_id, 'semester_id', { min: 1 }),
+        teacher_id: readInteger(body.teacher_id, 'teacher_id', { min: 1 }),
+        discipline_id: readInteger(body.discipline_id, 'discipline_id', { min: 1 }),
+        lesson_type: lessonType,
+        group_id: readInteger(body.group_id, 'group_id', { min: 1 }),
+        subgroup: body.subgroup === undefined ? 0 : readInteger(body.subgroup, 'Подгруппа', { min: 0, max: 2 }),
+        planned_hours: readInteger(body.planned_hours, 'Плановые часы', { min: 1, max: 2000 }),
+        entered_by: body.entered_by === 'teacher' ? 'teacher' : 'specialist'
+    };
+}
+
+function validateLoadPlanUpdateBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    const result = {};
+
+    if (body.planned_hours !== undefined) {
+        result.planned_hours = readInteger(body.planned_hours, 'Плановые часы', { min: 1, max: 2000 });
+    }
+
+    if (body.confirmed !== undefined) {
+        result.confirmed = Boolean(body.confirmed);
+    }
+
+    return result;
+}
+
+function validateLessonLoadPlanLinkBody(body) {
+    assertPlainObject(body, 'Тело запроса должно быть объектом');
+
+    if (body.load_plan_id === null) {
+        return { load_plan_id: null };
+    }
+
+    return {
+        load_plan_id: readInteger(body.load_plan_id, 'load_plan_id', { min: 1 })
+    };
+}
+
 module.exports = {
     createValidationError,
     validateAccountUpdateBody,
     validateBulkScheduleUploadBody,
+    validateDisciplineCreateBody,
     validateGroupCreateBody,
     validateGroupUpdateBody,
     validateLessonCreateBody,
+    validateLessonLoadPlanLinkBody,
     validateLessonUpdateBody,
+    validateLoadPlanCreateBody,
+    validateLoadPlanUpdateBody,
     validateLoginBody,
     validateMaterializeWeekBody,
     validateScheduleUploadBody,
-    validateSettingsBody
+    validateSemesterCreateBody,
+    validateSemesterUpdateBody,
+    validateSettingsBody,
+    validateTeacherCreateBody
 };

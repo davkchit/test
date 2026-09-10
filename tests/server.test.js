@@ -770,6 +770,207 @@ test('public API is rate-limited past the configured request budget', async () =
     await context.close();
 });
 
+test('teachers and disciplines: create, list, and reject duplicates', async () => {
+    const context = await createTestContext();
+
+    const teacherResponse = await fetch(`${context.baseUrl}/api/admin/teachers`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: 'Мустафин А.Р.' })
+    });
+    assert.equal(teacherResponse.status, 201);
+
+    const dupResponse = await fetch(`${context.baseUrl}/api/admin/teachers`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: 'Мустафин А.Р.' })
+    });
+    assert.equal(dupResponse.status, 409);
+
+    const disciplineResponse = await fetch(`${context.baseUrl}/api/admin/disciplines`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Матанализ' })
+    });
+    assert.equal(disciplineResponse.status, 201);
+
+    const listResponse = await fetch(`${context.baseUrl}/api/admin/teachers`, { headers: context.authHeaders });
+    const list = await listResponse.json();
+    assert.deepEqual(list.map((t) => t.full_name), ['Мустафин А.Р.']);
+
+    await context.close();
+});
+
+test('semesters: activating one deactivates every other', async () => {
+    const context = await createTestContext();
+
+    const fallResponse = await fetch(`${context.baseUrl}/api/admin/semesters`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: 'Осень 2026-2027', start_date: '2026-09-01', weeks_count: 18 })
+    });
+    const fall = await fallResponse.json();
+
+    const springResponse = await fetch(`${context.baseUrl}/api/admin/semesters`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: 'Весна 2026-2027', start_date: '2027-02-01', weeks_count: 18 })
+    });
+    const spring = await springResponse.json();
+
+    await fetch(`${context.baseUrl}/api/admin/semesters/${fall.id}`, {
+        method: 'PUT',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: true })
+    });
+
+    const afterFallActivate = await (await fetch(`${context.baseUrl}/api/admin/semesters`, { headers: context.authHeaders })).json();
+    assert.equal(afterFallActivate.find((s) => s.id === fall.id).is_active, true);
+    assert.equal(afterFallActivate.find((s) => s.id === spring.id).is_active, false);
+
+    await fetch(`${context.baseUrl}/api/admin/semesters/${spring.id}`, {
+        method: 'PUT',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ is_active: true })
+    });
+
+    const afterSpringActivate = await (await fetch(`${context.baseUrl}/api/admin/semesters`, { headers: context.authHeaders })).json();
+    assert.equal(afterSpringActivate.find((s) => s.id === fall.id).is_active, false);
+    assert.equal(afterSpringActivate.find((s) => s.id === spring.id).is_active, true);
+
+    await context.close();
+});
+
+test('load plan end-to-end: create a plan, link a schedule lesson, and see real hours counted', async () => {
+    const context = await createTestContext();
+    const db = getDb();
+
+    const teacherId = (await (await fetch(`${context.baseUrl}/api/admin/teachers`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ full_name: 'Гареева Л.М.' })
+    })).json()).id;
+
+    const disciplineId = (await (await fetch(`${context.baseUrl}/api/admin/disciplines`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: 'Программирование' })
+    })).json()).id;
+
+    // A semester safely in the past relative to "now" — every one of its
+    // weeks should already have happened, so the expected total is exact
+    // and never flaky.
+    const semester = await (await fetch(`${context.baseUrl}/api/admin/semesters`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ label: 'Test semester', start_date: '2026-02-09', weeks_count: 4 })
+    })).json();
+
+    const planResponse = await fetch(`${context.baseUrl}/api/admin/load-plan`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            semester_id: semester.id,
+            teacher_id: teacherId,
+            discipline_id: disciplineId,
+            lesson_type: 'Лаб',
+            group_id: context.primaryGroupId,
+            planned_hours: 8
+        })
+    });
+    const plan = await planResponse.json();
+
+    assert.equal(planResponse.status, 201);
+    // Not linked to any schedule lesson yet — zero hours so far.
+    assert.equal(plan.progress.occurred_hours, 0);
+
+    // Link the group's existing Monday template lesson (seeded by
+    // seedTestDatabase, week_type odd) to this plan row.
+    const lessonRow = db.prepare('SELECT id FROM lessons WHERE group_id = ? LIMIT 1').get(context.primaryGroupId);
+    const linkResponse = await fetch(`${context.baseUrl}/api/admin/lessons/${lessonRow.id}/load-plan`, {
+        method: 'PUT',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ load_plan_id: plan.id })
+    });
+    assert.equal(linkResponse.status, 200);
+
+    const listResponse = await fetch(`${context.baseUrl}/api/admin/load-plan?semester_id=${semester.id}`, {
+        headers: context.authHeaders
+    });
+    const list = await listResponse.json();
+    const updatedPlan = list.find((p) => p.id === plan.id);
+
+    // week_type=1 (odd) over 4 weeks => weeks 1 and 3 => 2 occurrences x 2h.
+    assert.equal(updatedPlan.progress.occurred_count, 2);
+    assert.equal(updatedPlan.progress.occurred_hours, 4);
+    assert.equal(updatedPlan.progress.remaining_hours, 4);
+
+    // Unlinking brings it back to zero.
+    await fetch(`${context.baseUrl}/api/admin/lessons/${lessonRow.id}/load-plan`, {
+        method: 'PUT',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ load_plan_id: null })
+    });
+    const afterUnlink = await (await fetch(`${context.baseUrl}/api/admin/load-plan?semester_id=${semester.id}`, {
+        headers: context.authHeaders
+    })).json();
+    assert.equal(afterUnlink.find((p) => p.id === plan.id).progress.occurred_hours, 0);
+
+    await context.close();
+});
+
+test('load plan rejects a reference to a group/teacher/discipline that does not exist', async () => {
+    const context = await createTestContext();
+
+    const response = await fetch(`${context.baseUrl}/api/admin/load-plan`, {
+        method: 'POST',
+        headers: { ...context.authHeaders, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            semester_id: 999999,
+            teacher_id: 999999,
+            discipline_id: 999999,
+            lesson_type: 'Лекция',
+            group_id: context.primaryGroupId,
+            planned_hours: 10
+        })
+    });
+
+    assert.equal(response.status, 404);
+
+    await context.close();
+});
+
+test('public teacher search finds by partial name, and the load endpoint returns the active semester without asking for it', async () => {
+    const context = await createTestContext();
+    const db = getDb();
+
+    const teacher = db.prepare('INSERT INTO teachers (full_name) VALUES (?)').run('Хамидуллин М. Р.');
+    const discipline = db.prepare('INSERT INTO disciplines (name) VALUES (?)').run('Информационная безопасность');
+    const semester = db.prepare(`
+        INSERT INTO semesters (label, start_date, weeks_count, is_active)
+        VALUES (?, ?, ?, 1)
+    `).run('Осень 2026-2027', '2026-02-09', 4);
+    db.prepare(`
+        INSERT INTO load_plan (semester_id, teacher_id, discipline_id, lesson_type, group_id, planned_hours, entered_by, confirmed)
+        VALUES (?, ?, ?, 'Лекция', ?, 36, 'specialist', 1)
+    `).run(semester.lastInsertRowid, teacher.lastInsertRowid, discipline.lastInsertRowid, context.primaryGroupId);
+
+    const searchResponse = await fetch(`${context.baseUrl}/api/teachers/search?q=хамидул`);
+    const searchResults = await searchResponse.json();
+    assert.equal(searchResults.length, 1);
+    assert.equal(searchResults[0].full_name, 'Хамидуллин М. Р.');
+
+    const loadResponse = await fetch(`${context.baseUrl}/api/teachers/${teacher.lastInsertRowid}/load`);
+    const loadBody = await loadResponse.json();
+
+    assert.equal(loadBody.semester.label, 'Осень 2026-2027');
+    assert.equal(loadBody.plan.length, 1);
+    assert.equal(loadBody.plan[0].discipline_name, 'Информационная безопасность');
+    assert.equal(loadBody.plan[0].planned_hours, 36);
+
+    await context.close();
+});
+
 async function createTestContext() {
     const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), 'anti-vuz-test-'));
     process.env.DB_PATH = path.join(tempDir, 'schedule.db');

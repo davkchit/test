@@ -1,6 +1,7 @@
 const express = require('express');
 const { getDb } = require('../db');
 const { addDaysToIsoDate, formatLocalDate, getWeekMeta } = require('../utils/date');
+const { computeExceptionWeeks, computeLoadProgress } = require('../utils/loadCalc');
 
 const router = express.Router();
 const DEFAULT_SCHEDULE_RANGE_DAYS = 28;
@@ -125,6 +126,118 @@ router.get('/schedule/:groupId', (req, res) => {
         exception_weeks: Array.from(exceptionWeeks).sort((left, right) => left - right),
         lessons,
         by_day: byDay
+    });
+});
+
+// Public, read-only — mirrors the group search on the welcome page.
+// Teachers get no login/role: this is how they find themselves.
+router.get('/teachers/search', (req, res) => {
+    const db = getDb();
+    const query = typeof req.query.q === 'string' ? req.query.q.trim() : '';
+
+    if (!query) {
+        return res.json([]);
+    }
+
+    // Filtered in JS, not SQL: SQLite's LIKE/LOWER() only case-fold ASCII —
+    // "Хамидуллин" would never match "хамидул" under COLLATE NOCASE. The
+    // teachers table is small (a department's worth of names), so a full
+    // scan with a proper Unicode-aware toLowerCase() is simpler and correct,
+    // rather than reaching for an ICU-enabled SQLite build.
+    const normalizedQuery = query.toLowerCase();
+    const rows = db.prepare('SELECT id, full_name FROM teachers ORDER BY full_name')
+        .all()
+        .filter((row) => row.full_name.toLowerCase().includes(normalizedQuery))
+        .slice(0, 20);
+
+    res.json(rows);
+});
+
+// Public, read-only. Returns the given teacher's load plan for the active
+// semester (or a specific one via ?semester_id=), each row with computed
+// progress — this is the "4/36" view a teacher checks themselves.
+router.get('/teachers/:id/load', (req, res) => {
+    const db = getDb();
+    const teacherId = Number.parseInt(req.params.id, 10);
+
+    if (!Number.isInteger(teacherId) || teacherId <= 0) {
+        return res.status(400).json({ error: 'Некорректный ID преподавателя' });
+    }
+
+    const teacher = db.prepare('SELECT id, full_name FROM teachers WHERE id = ?').get(teacherId);
+
+    if (!teacher) {
+        return res.status(404).json({ error: 'Преподаватель не найден' });
+    }
+
+    let semester;
+
+    if (req.query.semester_id) {
+        const semesterId = Number.parseInt(req.query.semester_id, 10);
+
+        if (!Number.isInteger(semesterId) || semesterId <= 0) {
+            return res.status(400).json({ error: 'Некорректный semester_id' });
+        }
+
+        semester = db.prepare('SELECT * FROM semesters WHERE id = ?').get(semesterId);
+    } else {
+        semester = db.prepare('SELECT * FROM semesters WHERE is_active = 1 ORDER BY start_date DESC LIMIT 1').get();
+    }
+
+    if (!semester) {
+        return res.json({ teacher, semester: null, plan: [] });
+    }
+
+    const planRows = db.prepare(`
+        SELECT lp.*, d.name AS discipline_name, g.name AS group_name
+        FROM load_plan lp
+        JOIN disciplines d ON d.id = lp.discipline_id
+        JOIN groups_ g ON g.id = lp.group_id
+        WHERE lp.teacher_id = ? AND lp.semester_id = ?
+        ORDER BY d.name, lp.lesson_type, g.name
+    `).all(teacherId, semester.id);
+
+    const exceptionWeeksCache = new Map();
+
+    const plan = planRows.map((row) => {
+        const cacheKey = `${row.group_id}:${semester.id}`;
+        let exceptionWeeks = exceptionWeeksCache.get(cacheKey);
+
+        if (!exceptionWeeks) {
+            const overrideRows = db.prepare(`
+                SELECT specific_week FROM lessons
+                WHERE group_id = ? AND specific_week IS NOT NULL
+            `).all(row.group_id);
+            exceptionWeeks = computeExceptionWeeks(overrideRows, semester.weeks_count);
+            exceptionWeeksCache.set(cacheKey, exceptionWeeks);
+        }
+
+        const linkedLessons = db.prepare('SELECT * FROM lessons WHERE load_plan_id = ?').all(row.id);
+        const progress = computeLoadProgress({
+            semesterStartDate: semester.start_date,
+            weeksCount: semester.weeks_count,
+            linkedLessons,
+            exceptionWeeks
+        });
+
+        return {
+            id: row.id,
+            discipline_name: row.discipline_name,
+            lesson_type: row.lesson_type,
+            group_name: row.group_name,
+            subgroup: row.subgroup,
+            confirmed: Boolean(row.confirmed),
+            planned_hours: row.planned_hours,
+            occurred_hours: progress.occurred_hours,
+            remaining_hours: Math.max(0, row.planned_hours - progress.occurred_hours),
+            occurrences: progress.occurrences
+        };
+    });
+
+    res.json({
+        teacher,
+        semester: { id: semester.id, label: semester.label },
+        plan
     });
 });
 
